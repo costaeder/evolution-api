@@ -60,6 +60,7 @@ import { CacheService } from '@api/services/cache.service';
 import { ChannelStartupService } from '@api/services/channel.service';
 import { Events, MessageSubtype, TypeMediaMessage, wa } from '@api/types/wa.types';
 import { CacheEngine } from '@cache/cacheengine';
+import { Semaphore } from 'async-mutex';
 import {
   CacheConf,
   Chatwoot,
@@ -143,6 +144,8 @@ import { PassThrough, Readable } from 'stream';
 import { v4 } from 'uuid';
 
 const groupMetadataCache = new CacheService(new CacheEngine(configService, 'groups').getEngine());
+
+const contactsUpsertSemaphore = new Semaphore(4);
 
 // Adicione a função getVideoDuration no início do arquivo
 async function getVideoDuration(input: Buffer | string | Readable): Promise<number> {
@@ -371,7 +374,7 @@ export class BaileysStartupService extends ChannelStartupService {
       qrcodeTerminal.generate(qr, { small: true }, (qrcode) =>
         this.logger.log(
           `\n{ instance: ${this.instance.name} pairingCode: ${this.instance.qrcode.pairingCode}, qrcodeCount: ${this.instance.qrcode.count} }\n` +
-            qrcode,
+          qrcode,
         ),
       );
 
@@ -704,30 +707,40 @@ export class BaileysStartupService extends ChannelStartupService {
 
   private readonly chatHandle = {
     'chats.upsert': async (chats: Chat[]) => {
+      const [slot, release] = await contactsUpsertSemaphore.acquire();
+
+      this.logger.verbose(`Acquired slot ${slot} to update ${chats.length} chats.`);
+
       const existingChatIds = await this.prismaRepository.chat.findMany({
         where: { instanceId: this.instanceId },
         select: { remoteJid: true },
       });
 
-      const existingChatIdSet = new Set(existingChatIds.map((chat) => chat.remoteJid));
 
-      const chatsToInsert = chats
-        .filter((chat) => !existingChatIdSet?.has(chat.id))
-        .map((chat) => ({
-          remoteJid: chat.id,
-          instanceId: this.instanceId,
-          name: chat.name,
-          unreadMessages: chat.unreadCount !== undefined ? chat.unreadCount : 0,
-        }));
+      try {
 
-      this.sendDataWebhook(Events.CHATS_UPSERT, chatsToInsert);
+        const existingChatIdSet = new Set(existingChatIds.map((chat) => chat.remoteJid));
 
-      if (chatsToInsert.length > 0) {
-        if (this.configService.get<Database>('DATABASE').SAVE_DATA.CHATS)
-          await this.prismaRepository.chat.createMany({
-            data: chatsToInsert,
-            skipDuplicates: true,
-          });
+        const chatsToInsert = chats
+          .filter((chat) => !existingChatIdSet?.has(chat.id))
+          .map((chat) => ({
+            remoteJid: chat.id,
+            instanceId: this.instanceId,
+            name: chat.name,
+            unreadMessages: chat.unreadCount !== undefined ? chat.unreadCount : 0,
+          }));
+
+        this.sendDataWebhook(Events.CHATS_UPSERT, chatsToInsert);
+
+        if (chatsToInsert.length > 0) {
+          if (this.configService.get<Database>('DATABASE').SAVE_DATA.CHATS)
+            await this.prismaRepository.chat.createMany({
+              data: chatsToInsert,
+              skipDuplicates: true,
+            });
+        }
+      } finally {
+        release();
       }
     },
 
@@ -740,21 +753,30 @@ export class BaileysStartupService extends ChannelStartupService {
         }
       >[],
     ) => {
-      const chatsRaw = chats.map((chat) => {
-        return { remoteJid: chat.id, instanceId: this.instanceId };
-      });
 
-      this.sendDataWebhook(Events.CHATS_UPDATE, chatsRaw);
+      const [slot, release] = await contactsUpsertSemaphore.acquire();
+      this.logger.verbose(`Acquired slot ${slot} to update ${chats.length} chats.`);
 
-      for (const chat of chats) {
-        await this.prismaRepository.chat.updateMany({
-          where: {
-            instanceId: this.instanceId,
-            remoteJid: chat.id,
-            name: chat.name,
-          },
-          data: { remoteJid: chat.id },
+      try {
+
+        const chatsRaw = chats.map((chat) => {
+          return { remoteJid: chat.id, instanceId: this.instanceId };
         });
+
+        this.sendDataWebhook(Events.CHATS_UPDATE, chatsRaw);
+
+        for (const chat of chats) {
+          await this.prismaRepository.chat.updateMany({
+            where: {
+              instanceId: this.instanceId,
+              remoteJid: chat.id,
+              name: chat.name,
+            },
+            data: { remoteJid: chat.id },
+          });
+        }
+      } finally {
+        release();
       }
     },
 
@@ -771,8 +793,22 @@ export class BaileysStartupService extends ChannelStartupService {
   };
 
   private readonly contactHandle = {
+
     'contacts.upsert': async (contacts: Contact[]) => {
+
+     
+
+     
+
       try {
+
+        if (contacts.length > 500) {
+          this.logger.error(`Muitos contatos sendo atualizados de uma vez. Impedindo a execução.`);
+          return;
+        }
+
+        this.logger.verbose(`Atualizando. ${contacts.length} contatos.`);
+
         const contactsRaw: any = contacts.map((contact) => ({
           remoteJid: contact.id,
           pushName: contact?.name || contact?.verifiedName || contact.id.split('@')[0],
@@ -829,32 +865,43 @@ export class BaileysStartupService extends ChannelStartupService {
           this.sendDataWebhook(Events.CONTACTS_UPDATE, updatedContacts);
           await Promise.all(
             updatedContacts.map(async (contact) => {
-              const update = this.prismaRepository.contact.updateMany({
-                where: { remoteJid: contact.remoteJid, instanceId: this.instanceId },
-                data: {
-                  profilePicUrl: contact.profilePicUrl,
-                },
-              });
 
-              if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
-                const instance = { instanceName: this.instance.name, instanceId: this.instance.id };
+              const [slot, release] = await contactsUpsertSemaphore.acquire();
 
-                const findParticipant = await this.chatwootService.findContact(
-                  instance,
-                  contact.remoteJid.split('@')[0],
-                );
+              this.logger.verbose(`Acquired slot ${slot} to upsert ${contacts.length} contacts.`);
 
-                if (!findParticipant) {
-                  return;
+              try {
+
+                const update = this.prismaRepository.contact.updateMany({
+                  where: { remoteJid: contact.remoteJid, instanceId: this.instanceId },
+                  data: {
+                    profilePicUrl: contact.profilePicUrl,
+                  },
+                });
+
+                if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
+                  const instance = { instanceName: this.instance.name, instanceId: this.instance.id };
+
+                  const findParticipant = await this.chatwootService.findContact(
+                    instance,
+                    contact.remoteJid.split('@')[0],
+                  );
+
+                  if (!findParticipant) {
+                    return;
+                  }
+
+                  this.chatwootService.updateContact(instance, findParticipant.id, {
+                    name: contact.pushName,
+                    avatar_url: contact.profilePicUrl,
+                  });
                 }
 
-                this.chatwootService.updateContact(instance, findParticipant.id, {
-                  name: contact.pushName,
-                  avatar_url: contact.profilePicUrl,
-                });
+                return update;
+              } finally {
+                release();
               }
-
-              return update;
+              
             }),
           );
         }
@@ -862,9 +909,16 @@ export class BaileysStartupService extends ChannelStartupService {
         console.error(error);
         this.logger.error(`Error: ${error.message}`);
       }
+     
     },
 
     'contacts.update': async (contacts: Partial<Contact>[]) => {
+
+      if (contacts.length > 300) {
+        this.logger.error(`Muitos contatos sendo atualizados de uma vez. Impedindo a execução.`);
+        return;
+      }
+
       const contactsRaw: {
         remoteJid: string;
         pushName?: string;
@@ -975,18 +1029,18 @@ export class BaileysStartupService extends ChannelStartupService {
 
         const messagesRepository = new Set(
           chatwootImport.getRepositoryMessagesCache(instance) ??
-            (
-              await this.prismaRepository.message.findMany({
-                select: { key: true },
-                where: { instanceId: this.instanceId },
-              })
-            ).map((message) => {
-              const key = message.key as {
-                id: string;
-              };
+          (
+            await this.prismaRepository.message.findMany({
+              select: { key: true },
+              where: { instanceId: this.instanceId },
+            })
+          ).map((message) => {
+            const key = message.key as {
+              id: string;
+            };
 
-              return key.id;
-            }),
+            return key.id;
+          }),
         );
 
         if (chatwootImport.getRepositoryMessagesCache(instance) === null) {
@@ -2188,12 +2242,20 @@ export class BaileysStartupService extends ChannelStartupService {
         }
       }
 
+
+
+
       if (this.configService.get<Database>('DATABASE').SAVE_DATA.NEW_MESSAGE) {
         const msg = await this.prismaRepository.message.create({
           data: messageRaw,
         });
 
+        
+
         if (isMedia && this.configService.get<S3>('S3').ENABLE) {
+
+          this.logger.verbose(`Processing media message`);
+
           try {
             const message: any = messageRaw;
             const media = await this.getBase64FromMediaMessage(
@@ -2215,9 +2277,13 @@ export class BaileysStartupService extends ChannelStartupService {
               fileName,
             );
 
-            await s3Service.uploadFile(fullName, buffer, size.fileLength?.low, {
+            this.logger.verbose(`Uploading file to S3`);
+
+           let result =  await s3Service.uploadFile(fullName, buffer, size.fileLength?.low, {
               'Content-Type': mimetype,
             });
+
+            this.logger.verbose(`File uploaded to S3 ${JSON.stringify(result)}`);
 
             await this.prismaRepository.media.create({
               data: {
@@ -2230,6 +2296,8 @@ export class BaileysStartupService extends ChannelStartupService {
             });
 
             const mediaUrl = await s3Service.getObjectUrl(fullName);
+
+            this.logger.info(`Media URL on S3 ${mediaUrl}`);
 
             messageRaw.message.mediaUrl = mediaUrl;
 

@@ -297,6 +297,8 @@ export class ChatwootService {
   ) {
     const client = await this.clientCw(instance);
 
+    this.logger.verbose('Create contact called.');
+
     if (!client) {
       this.logger.warn('client not found');
       return null;
@@ -361,6 +363,7 @@ export class ChatwootService {
         id,
         data,
       });
+      
 
       return contact;
     } catch (error) {
@@ -407,23 +410,43 @@ export class ChatwootService {
 
   public async findContact(instance: InstanceDto, phoneNumber: string) {
     const client = await this.clientCw(instance);
+  
+
+    this.logger.verbose(`Finding contact in chatwoot: ${phoneNumber}`);
 
     if (!client) {
       this.logger.warn('client not found');
       return null;
     }
+  
+    const cacheKey = `${instance.instanceName}:findContact-${phoneNumber}`;
+    this.logger.verbose(`Finding contact in chatwoot - cache key: ${cacheKey}`);
 
+    const stackTrace = new Error().stack;
+    this.logger.verbose(`Stack trace: ${stackTrace}`);
+
+  
+    // Verifica o cache
+    if (await this.cache.has(cacheKey)) {
+      this.logger.verbose(`Finding contact in chatwoot - hit for key: ${cacheKey}`);
+      const cachedContact = await this.cache.get(cacheKey);
+      this.logger.verbose(`Cached contact: ${JSON.stringify(cachedContact)}`);
+      return cachedContact;
+    }
+    
+    this.logger.verbose(`Miss for key: ${cacheKey}`);
+    
     let query: any;
     const isGroup = phoneNumber.includes('@g.us');
-
+  
     if (!isGroup) {
       query = `+${phoneNumber}`;
     } else {
       query = phoneNumber;
     }
-
+  
     let contact: any;
-
+  
     if (isGroup) {
       contact = await client.contacts.search({
         accountId: this.provider.accountId,
@@ -438,17 +461,23 @@ export class ChatwootService {
         },
       });
     }
-
-    if (!contact && contact?.payload?.length === 0) {
+  
+    if (!contact || contact?.payload?.length === 0) {
       this.logger.warn('contact not found');
       return null;
     }
-
-    if (!isGroup) {
-      return contact.payload.length > 1 ? this.findContactInContactList(contact.payload, query) : contact.payload[0];
-    } else {
-      return contact.payload.find((contact) => contact.identifier === query);
-    }
+  
+    const resolvedContact = isGroup
+      ? contact.payload.find((c) => c.identifier === query)
+      : contact.payload.length > 1
+      ? this.findContactInContactList(contact.payload, query)
+      : contact.payload[0];
+  
+    // Armazena no cache
+    await this.cache.set(cacheKey, resolvedContact); 
+    this.logger.verbose(`Contact cached with key: ${cacheKey}`);
+  
+    return resolvedContact;
   }
 
   private async mergeBrazilianContacts(contacts: any[]) {

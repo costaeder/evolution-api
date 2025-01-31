@@ -163,6 +163,9 @@ export class EvolutionStartupService extends ChannelStartupService {
           data: messageRaw,
         });
 
+
+        this.logger.verbose('Message received: ');
+
         await this.updateContact({
           remoteJid: messageRaw.key.remoteJid,
           pushName: messageRaw.key.fromMe ? '' : messageRaw.key.fromMe == null ? '' : received.pushName,
@@ -190,6 +193,8 @@ export class EvolutionStartupService extends ChannelStartupService {
       this.sendDataWebhook(Events.CONTACTS_UPDATE, contactRaw);
 
       if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
+        this.logger.log('Sending contact update to Chatwoot');
+
         await this.chatwootService.eventWhatsapp(
           Events.CONTACTS_UPDATE,
           { instanceName: this.instance.name, instanceId: this.instanceId },

@@ -520,16 +520,16 @@ class ChatwootImport {
           : '' + msg.message.templateMessage.hydratedTemplate.hydratedContentText;
 
       case 'imageMessage':
-        return '_<Image Message>_';
+        return '_<imagem indisponível>_';
 
       case 'videoMessage':
-        return '_<Video Message>_';
+        return '_<vídeo indisponível>_';
 
       case 'audioMessage':
-        return '_<Audio Message>_';
+        return '_<áudio indisponível>_';
 
       case 'stickerMessage':
-        return '_<Sticker Message>_';
+        return '_<mídia indisponível>_';
 
       default:
         return '';
