@@ -136,7 +136,7 @@ import mimeTypes from 'mime-types';
 import NodeCache from 'node-cache';
 import cron from 'node-cron';
 import { release } from 'os';
-import { join } from 'path';
+import path, { join } from 'path';
 import P from 'pino';
 import qrcode, { QRCodeToDataURLOptions } from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -145,6 +145,12 @@ import { PassThrough, Readable } from 'stream';
 import { v4 } from 'uuid';
 
 import { useVoiceCallsBaileys } from './voiceCalls/useVoiceCallsBaileys';
+
+
+type DownloadMediaMessageContext = {
+  reuploadRequest: (msg: WAMessage) => Promise<WAMessage>;
+  logger: P.Logger;
+};
 
 const groupMetadataCache = new CacheService(new CacheEngine(configService, 'groups').getEngine());
 
@@ -1290,13 +1296,25 @@ export class BaileysStartupService extends ChannelStartupService {
                     true,
                   );
 
-                  const { buffer, mediaType, fileName, size } = media;
-                  const mimetype = mimeTypes.lookup(fileName).toString();
-                  const fullName = join(`${this.instance.id}`, received.key.remoteJid, mediaType, fileName);
+                  const { buffer, mediaType, fileName: originalName, size } = media;
+                  const mimetype = mimeTypes.lookup(originalName).toString();
+
+                  // calcula a extensão (usa a do nome original ou, em último caso, a do mimetype)
+                  const ext = path.extname(originalName) || `.${mimeTypes.extension(mimetype)}`;
+
+                  // força usar sempre o id da mensagem como nome de arquivo
+                  const fileName = `${received.key.id}${ext}`;
+
+                  const fullName = join(
+                    this.instance.id,
+                    received.key.remoteJid,
+                    mediaType,
+                    fileName,
+                  );
+
                   await s3Service.uploadFile(fullName, buffer, size.fileLength?.low, {
                     'Content-Type': mimetype,
                   });
-
                   await this.prismaRepository.media.create({
                     data: {
                       messageId: msg.id,
@@ -1422,6 +1440,11 @@ export class BaileysStartupService extends ChannelStartupService {
           continue;
         }
 
+        if (!key.id) {
+          console.warn(`Mensagem sem key.id, pulando update: ${JSON.stringify(key)}`);
+          continue;
+        }
+
         if (status[update.status] === 'READ' && key.fromMe) {
           if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
             this.chatwootService.eventWhatsapp(
@@ -1509,7 +1532,7 @@ export class BaileysStartupService extends ChannelStartupService {
             remoteJid: key.remoteJid,
             fromMe: key.fromMe,
             participant: key?.remoteJid,
-            status: status[update.status],
+            status: status[update.status]?? 'UNKNOWN',
             pollUpdates,
             instanceId: this.instanceId,
           };
@@ -3601,94 +3624,145 @@ export class BaileysStartupService extends ChannelStartupService {
     }
   }
 
-  public async getBase64FromMediaMessage(data: getBase64FromMediaMessageDto, getBuffer = false) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  public async getBase64FromMediaMessage(
+    data: getBase64FromMediaMessageDto,
+    getBuffer = false
+  ) {
     try {
       const m = data?.message;
       const convertToMp4 = data?.convertToMp4 ?? false;
-
-      const msg = m?.message ? m : ((await this.getMessage(m.key, true)) as proto.IWebMessageInfo);
-
+  
+      // Se já houver propriedade "message", usa-o; senão, busca-o via key
+      const msg: proto.IWebMessageInfo = m?.message
+        ? m
+        : (await this.getMessage(m.key, true)) as proto.IWebMessageInfo;
       if (!msg) {
-        throw 'Message not found';
+        throw new Error('Message not found');
       }
-
+  
+      // Verifica se o conteúdo está aninhado em algum subtipo (ex.: extendedTextMessage)
       for (const subtype of MessageSubtype) {
         if (msg.message[subtype]) {
           msg.message = msg.message[subtype].message;
+          break;
         }
       }
-
+  
+      // Identifica o tipo de mídia contido na mensagem
       let mediaMessage: any;
-      let mediaType: string;
-
+      let mediaType = '';
       for (const type of TypeMediaMessage) {
-        mediaMessage = msg.message[type];
-        if (mediaMessage) {
+        if (msg.message[type]) {
+          mediaMessage = msg.message[type];
           mediaType = type;
           break;
         }
       }
-
       if (!mediaMessage) {
-        throw 'The message is not of the media type';
+        throw new Error('The message is not of the media type');
       }
-
-      if (typeof mediaMessage['mediaKey'] === 'object') {
+  
+      // Se o mediaKey for um objeto, forçamos a serialização para “descolar” possíveis problemas
+      if (typeof mediaMessage.mediaKey === 'object') {
         msg.message = JSON.parse(JSON.stringify(msg.message));
       }
-
-      const buffer = await downloadMediaMessage(
-        { key: msg?.key, message: msg?.message },
-        'buffer',
-        {},
-        {
-          logger: P({ level: 'error' }) as any,
-          reuploadRequest: this.client.updateMediaMessage,
+  
+      // Define um contexto completo conforme DownloadMediaMessageContext
+      const downloadContext: DownloadMediaMessageContext = {
+        logger: P({ level: 'error' }),
+        reuploadRequest: async (message: WAMessage): Promise<WAMessage> => {
+          // Aqui chamamos explicitamente o método que atualiza a mídia;
+          // Se o método updateMediaMessage não retornar nada (void), retornamos a própria mensagem.
+          const updatedMsg = await this.client.updateMediaMessage(message);
+          return updatedMsg ? updatedMsg : message;
         },
-      );
+      };
+  
+      let buffer: Buffer;
+      try {
+        // Tenta baixar a mídia usando o contexto com reuploadRequest
+        buffer = (await downloadMediaMessage(
+          { key: msg.key, message: msg.message },
+          'buffer',
+          {},
+          downloadContext
+        )) as Buffer;
+      } catch (initialError) {
+        this.logger.warn(
+          'Initial downloadMediaMessage failed, updating media and retrying...'
+        );
+        // Se a tentativa falhar (possivelmente por URL expirada), atualiza a mídia e refaz o download
+        await this.client.updateMediaMessage(msg);
+        buffer = (await downloadMediaMessage(
+          { key: msg.key, message: msg.message },
+          'buffer',
+          {},
+          { logger: P({ level: 'error' }), reuploadRequest: async (m: WAMessage) => m } // Contexto “vazio”
+        )) as Buffer;
+      }
+  
       const typeMessage = getContentType(msg.message);
-
-      const ext = mimeTypes.extension(mediaMessage?.['mimetype']);
-      const fileName = mediaMessage?.['fileName'] || `${msg.key.id}.${ext}` || `${v4()}.${ext}`;
-
+      const ext = mimeTypes.extension(mediaMessage?.mimetype);
+      const fileName =
+        mediaMessage?.fileName || `${msg.key.id}.${ext}` || `${v4()}.${ext}`;
+  
+      // Se for áudio e for pedido converter para mp4, processa a conversão
       if (convertToMp4 && typeMessage === 'audioMessage') {
         try {
-          const convert = await this.processAudioMp4(buffer.toString('base64'));
-
-          if (Buffer.isBuffer(convert)) {
-            const result = {
+          const converted = await this.processAudioMp4(buffer.toString('base64'));
+          if (Buffer.isBuffer(converted)) {
+            return {
               mediaType,
               fileName,
-              caption: mediaMessage['caption'],
+              caption: mediaMessage.caption,
               size: {
-                fileLength: mediaMessage['fileLength'],
-                height: mediaMessage['height'],
-                width: mediaMessage['width'],
+                fileLength: mediaMessage.fileLength,
+                height: mediaMessage.height,
+                width: mediaMessage.width,
               },
               mimetype: 'audio/mp4',
-              base64: convert.toString('base64'),
-              buffer: getBuffer ? convert : null,
+              base64: converted.toString('base64'),
+              buffer: getBuffer ? converted : null,
             };
-
-            return result;
           }
-        } catch (error) {
+        } catch (convertError) {
           this.logger.error('Error converting audio to mp4:');
-          this.logger.error(error);
+          this.logger.error(convertError);
           throw new BadRequestException('Failed to convert audio to MP4');
         }
       }
-
+  
+      // Retorna os dados da mídia
       return {
         mediaType,
         fileName,
-        caption: mediaMessage['caption'],
+        caption: mediaMessage.caption,
         size: {
-          fileLength: mediaMessage['fileLength'],
-          height: mediaMessage['height'],
-          width: mediaMessage['width'],
+          fileLength: mediaMessage.fileLength,
+          height: mediaMessage.height,
+          width: mediaMessage.width,
         },
-        mimetype: mediaMessage['mimetype'],
+        mimetype: mediaMessage.mimetype,
         base64: buffer.toString('base64'),
         buffer: getBuffer ? buffer : null,
       };
@@ -3698,6 +3772,19 @@ export class BaileysStartupService extends ChannelStartupService {
       throw new BadRequestException(error.toString());
     }
   }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   public async fetchPrivacySettings() {
     const privacy = await this.client.fetchPrivacySettings();
@@ -4406,29 +4493,41 @@ export class BaileysStartupService extends ChannelStartupService {
     return unreadMessages;
   }
 
-  private async addLabel(labelId: string, instanceId: string, chatId: string) {
-    const id = cuid();
-
-    await this.prismaRepository.$executeRawUnsafe(
-      `INSERT INTO "Chat" ("id", "instanceId", "remoteJid", "labels", "createdAt", "updatedAt")
-       VALUES ($4, $2, $3, to_jsonb(ARRAY[$1]::text[]), NOW(), NOW()) ON CONFLICT ("instanceId", "remoteJid")
-     DO
-      UPDATE
-          SET "labels" = (
-          SELECT to_jsonb(array_agg(DISTINCT elem))
-          FROM (
-          SELECT jsonb_array_elements_text("Chat"."labels") AS elem
-          UNION
-          SELECT $1::text AS elem
-          ) sub
-          ),
-          "updatedAt" = NOW();`,
-      labelId,
-      instanceId,
-      chatId,
-      id,
-    );
+  private async addLabel(
+    labelId: string,
+    instanceId: string,
+    chatId: string
+  ): Promise<void> {
+    try {
+      await this.prismaRepository.$executeRawUnsafe(
+        `UPDATE "Chat"
+           SET "labels" = (
+             SELECT to_jsonb(array_agg(DISTINCT elem))
+             FROM (
+               SELECT jsonb_array_elements_text("Chat".labels) AS elem
+               UNION
+               SELECT $1::text AS elem
+             ) sub
+           ),
+           "updatedAt" = NOW()
+         WHERE "instanceId" = $2
+           AND "remoteJid"  = $3;`,
+        labelId,
+        instanceId,
+        chatId
+      );
+    } catch (err: unknown) {
+      // Não deixa quebrar nada: registra e segue em frente
+      const msg =
+        err instanceof Error ? err.message : JSON.stringify(err);
+      // Use console.warn para evitar conflito de assinatura de método
+      console.warn(
+        `Failed to add label ${labelId} to chat ${chatId}@${instanceId}: ${msg}`
+      );
+    }
   }
+  
+  
 
   private async removeLabel(labelId: string, instanceId: string, chatId: string) {
     const id = cuid();
