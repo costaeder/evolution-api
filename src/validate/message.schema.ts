@@ -84,8 +84,7 @@ export const textMessageSchema: JSONSchema7 = {
       uniqueItems: true,
       items: {
         type: 'string',
-        pattern: '^\\d+',
-        description: '"mentioned" must be an array of numeric strings',
+        description: '"mentioned" must be an array of JIDs',
       },
     },
   },
@@ -114,8 +113,7 @@ export const mediaMessageSchema: JSONSchema7 = {
       uniqueItems: true,
       items: {
         type: 'string',
-        pattern: '^\\d+',
-        description: '"mentioned" must be an array of numeric strings',
+        description: '"mentioned" must be an array of JIDs',
       },
     },
   },
@@ -140,8 +138,7 @@ export const ptvMessageSchema: JSONSchema7 = {
       uniqueItems: true,
       items: {
         type: 'string',
-        pattern: '^\\d+',
-        description: '"mentioned" must be an array of numeric strings',
+        description: '"mentioned" must be an array of JIDs',
       },
     },
   },
@@ -166,8 +163,7 @@ export const audioMessageSchema: JSONSchema7 = {
       uniqueItems: true,
       items: {
         type: 'string',
-        pattern: '^\\d+',
-        description: '"mentioned" must be an array of numeric strings',
+        description: '"mentioned" must be an array of JIDs',
       },
     },
   },
@@ -189,8 +185,7 @@ export const statusMessageSchema: JSONSchema7 = {
       uniqueItems: true,
       items: {
         type: 'string',
-        pattern: '^\\d+',
-        description: '"statusJidList" must be an array of numeric strings',
+        description: '"statusJidList" must be an array of JIDs',
       },
     },
     allContacts: { type: 'boolean', enum: [true, false] },
@@ -216,8 +211,7 @@ export const stickerMessageSchema: JSONSchema7 = {
       uniqueItems: true,
       items: {
         type: 'string',
-        pattern: '^\\d+',
-        description: '"mentioned" must be an array of numeric strings',
+        description: '"mentioned" must be an array of JIDs',
       },
     },
   },
@@ -245,8 +239,7 @@ export const locationMessageSchema: JSONSchema7 = {
       uniqueItems: true,
       items: {
         type: 'string',
-        pattern: '^\\d+',
-        description: '"mentioned" must be an array of numeric strings',
+        description: '"mentioned" must be an array of JIDs',
       },
     },
   },
@@ -332,8 +325,7 @@ export const pollMessageSchema: JSONSchema7 = {
       uniqueItems: true,
       items: {
         type: 'string',
-        pattern: '^\\d+',
-        description: '"mentioned" must be an array of numeric strings',
+        description: '"mentioned" must be an array of JIDs',
       },
     },
   },
@@ -389,8 +381,7 @@ export const listMessageSchema: JSONSchema7 = {
       uniqueItems: true,
       items: {
         type: 'string',
-        pattern: '^\\d+',
-        description: '"mentioned" must be an array of numeric strings',
+        description: '"mentioned" must be an array of JIDs',
       },
     },
   },
@@ -440,8 +431,7 @@ export const buttonsMessageSchema: JSONSchema7 = {
       uniqueItems: true,
       items: {
         type: 'string',
-        pattern: '^\\d+',
-        description: '"mentioned" must be an array of numeric strings',
+        description: '"mentioned" must be an array of JIDs',
       },
     },
   },
