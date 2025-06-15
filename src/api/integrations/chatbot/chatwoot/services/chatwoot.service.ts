@@ -315,10 +315,13 @@ export class ChatwootService {
       };
 
       const isLid = jid?.endsWith('@lid');
-      if ((jid && jid.includes('@') && !isLid) || !jid) {
-        data['phone_number'] = `+${phoneNumber}`;
-      } else if (isLid && phoneNumber && phoneNumber !== jid?.split('@')[0]) {
-        data['phone_number'] = `+${phoneNumber}`;
+
+      if (isLid) {
+        if (phoneNumber && phoneNumber !== jid?.split('@')[0]) {
+          data.phone_number = `+${phoneNumber}`;
+        }
+      } else if (phoneNumber) {
+        data.phone_number = `+${phoneNumber}`;
       }
     } else {
       data = {
