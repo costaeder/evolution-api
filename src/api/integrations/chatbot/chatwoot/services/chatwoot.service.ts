@@ -613,12 +613,13 @@ export class ChatwootService {
       const isGroup = body.key.remoteJid.includes('@g.us');
       this.logger.verbose(`Is group: ${isGroup}`);
 
-      const chatId = isGroup ? body.key.remoteJid : body.key.remoteJid.split('@')[0];
+      const chatId = body.key.remoteJid;
+      const phoneNumber = isGroup ? chatId : this.getNumberFromRemoteJid(chatId);
       this.logger.verbose(`Chat ID: ${chatId}`);
 
       let nameContact: string;
 
-      nameContact = !body.key.fromMe ? body.pushName : chatId;
+      nameContact = !body.key.fromMe ? body.pushName : phoneNumber;
       this.logger.verbose(`Name contact: ${nameContact}`);
 
       const filterInbox = await this.getInbox(instance);
@@ -644,7 +645,7 @@ export class ChatwootService {
         this.logger.verbose(`Found participant: ${JSON.stringify(findParticipant)}`);
 
         if (findParticipant) {
-          if (!findParticipant.name || findParticipant.name === chatId) {
+          if (!findParticipant.name || findParticipant.name === phoneNumber) {
             await this.updateContact(instance, findParticipant.id, {
               name: body.pushName,
               avatar_url: picture_url.profilePictureUrl || null,
@@ -666,7 +667,7 @@ export class ChatwootService {
       const picture_url = await this.waMonitor.waInstances[instance.instanceName].profilePicture(chatId);
       this.logger.verbose(`Contact profile picture URL: ${JSON.stringify(picture_url)}`);
 
-      let contact = await this.findContact(instance, chatId);
+      let contact = await this.findContact(instance, phoneNumber);
       this.logger.verbose(`Found contact: ${JSON.stringify(contact)}`);
 
       if (contact) {
@@ -677,9 +678,9 @@ export class ChatwootService {
           const pictureNeedsUpdate = waProfilePictureFile !== chatwootProfilePictureFile;
           const nameNeedsUpdate =
             !contact.name ||
-            contact.name === chatId ||
-            (`+${chatId}`.startsWith('+55')
-              ? this.getNumbers(`+${chatId}`).some(
+            contact.name === phoneNumber ||
+            (`+${phoneNumber}`.startsWith('+55')
+              ? this.getNumbers(`+${phoneNumber}`).some(
                   (v) => contact.name === v || contact.name === v.substring(3) || contact.name === v.substring(1),
                 )
               : false);
@@ -699,7 +700,7 @@ export class ChatwootService {
         const jid = body.key.remoteJid;
         contact = await this.createContact(
           instance,
-          chatId,
+          phoneNumber,
           filterInbox.id,
           isGroup,
           nameContact,
