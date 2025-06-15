@@ -225,7 +225,7 @@ export class TypebotService {
 
           if (formattedText.includes('[list]')) {
             const listJson = {
-              number: remoteJid.split('@')[0],
+              number: remoteJid,
               title: '',
               description: '',
               buttonText: '',
@@ -269,7 +269,7 @@ export class TypebotService {
             await instance.listMessage(listJson);
           } else if (formattedText.includes('[buttons]')) {
             const buttonJson = {
-              number: remoteJid.split('@')[0],
+              number: remoteJid,
               thumbnailUrl: undefined,
               title: '',
               description: '',
@@ -340,7 +340,7 @@ export class TypebotService {
           } else {
             await instance.textMessage(
               {
-                number: remoteJid.split('@')[0],
+                number: remoteJid,
                 delay: settings?.delayMessage || 1000,
                 text: formattedText,
               },
@@ -354,7 +354,7 @@ export class TypebotService {
         if (message.type === 'image') {
           await instance.mediaMessage(
             {
-              number: remoteJid.split('@')[0],
+              number: remoteJid,
               delay: settings?.delayMessage || 1000,
               mediatype: 'image',
               media: message.content.url,
@@ -369,7 +369,7 @@ export class TypebotService {
         if (message.type === 'video') {
           await instance.mediaMessage(
             {
-              number: remoteJid.split('@')[0],
+              number: remoteJid,
               delay: settings?.delayMessage || 1000,
               mediatype: 'video',
               media: message.content.url,
@@ -384,7 +384,7 @@ export class TypebotService {
         if (message.type === 'audio') {
           await instance.audioWhatsapp(
             {
-              number: remoteJid.split('@')[0],
+              number: remoteJid,
               delay: settings?.delayMessage || 1000,
               encoding: true,
               audio: message.content.url,
@@ -417,7 +417,7 @@ export class TypebotService {
 
           if (formattedText.includes('[list]')) {
             const listJson = {
-              number: remoteJid.split('@')[0],
+              number: remoteJid,
               title: '',
               description: '',
               buttonText: '',
@@ -461,7 +461,7 @@ export class TypebotService {
             await instance.listMessage(listJson);
           } else if (formattedText.includes('[buttons]')) {
             const buttonJson = {
-              number: remoteJid.split('@')[0],
+              number: remoteJid,
               thumbnailUrl: undefined,
               title: '',
               description: '',
@@ -532,7 +532,7 @@ export class TypebotService {
           } else {
             await instance.textMessage(
               {
-                number: remoteJid.split('@')[0],
+                number: remoteJid,
                 delay: settings?.delayMessage || 1000,
                 text: formattedText,
               },
@@ -644,7 +644,7 @@ export class TypebotService {
             if (unknownMessage) {
               this.waMonitor.waInstances[instance.name].textMessage(
                 {
-                  number: remoteJid.split('@')[0],
+                  number: remoteJid,
                   delay: delayMessage || 1000,
                   text: unknownMessage,
                 },
@@ -788,7 +788,7 @@ export class TypebotService {
           if (unknownMessage) {
             this.waMonitor.waInstances[instance.name].textMessage(
               {
-                number: remoteJid.split('@')[0],
+                number: remoteJid,
                 delay: delayMessage || 1000,
                 text: unknownMessage,
               },
@@ -880,7 +880,7 @@ export class TypebotService {
       if (unknownMessage) {
         this.waMonitor.waInstances[instance.name].textMessage(
           {
-            number: remoteJid.split('@')[0],
+            number: remoteJid,
             delay: delayMessage || 1000,
             text: unknownMessage,
           },
