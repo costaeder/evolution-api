@@ -213,7 +213,7 @@ class ChatwootImport {
         return 0;
       }
 
-      // ordering messages by number and timestamp asc
+      // ordering messages by JID string and timestamp asc
       messagesOrdered.sort((a, b) => {
         const aKey = a.key as {
           remoteJid: string;
@@ -226,7 +226,8 @@ class ChatwootImport {
         const aMessageTimestamp = a.messageTimestamp as any as number;
         const bMessageTimestamp = b.messageTimestamp as any as number;
 
-        return parseInt(aKey.remoteJid) - parseInt(bKey.remoteJid) || aMessageTimestamp - bMessageTimestamp;
+        const jidCompare = aKey.remoteJid.localeCompare(bKey.remoteJid);
+        return jidCompare || aMessageTimestamp - bMessageTimestamp;
       });
 
       const allMessagesMappedByPhoneNumber = this.createMessagesMapByPhoneNumber(messagesOrdered);
