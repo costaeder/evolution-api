@@ -444,12 +444,13 @@ export class ChatwootService {
     this.logger.verbose(`Miss for key: ${cacheKey}`);
     
     let query: any;
-    const isGroup = phoneNumber.includes('@g.us');
-  
-    if (!isGroup) {
-      query = `+${phoneNumber}`;
-    } else {
+    const isGroup = phoneNumber?.includes('@g.us');
+    const searchByIdentifier = !phoneNumber || phoneNumber.endsWith('@lid');
+
+    if (isGroup || searchByIdentifier) {
       query = phoneNumber;
+    } else {
+      query = `+${phoneNumber}`;
     }
   
     let contact: any;
@@ -464,7 +465,10 @@ export class ChatwootService {
         method: 'POST',
         url: `/api/v1/accounts/${this.provider.accountId}/contacts/filter`,
         body: {
-          payload: this.getFilterPayload(query),
+          payload: this.getFilterPayload(
+            query,
+            searchByIdentifier,
+          ),
         },
       });
     }
@@ -477,7 +481,7 @@ export class ChatwootService {
     const resolvedContact = isGroup
       ? contact.payload.find((c) => c.identifier === query)
       : contact.payload.length > 1
-      ? this.findContactInContactList(contact.payload, query)
+      ? this.findContactInContactList(contact.payload, query, searchByIdentifier)
       : contact.payload[0];
   
     // Armazena no cache
@@ -505,9 +509,13 @@ export class ChatwootService {
     }
   }
 
-  private findContactInContactList(contacts: any[], query: string) {
+  private findContactInContactList(
+    contacts: any[],
+    query: string,
+    useIdentifier = false,
+  ) {
     const phoneNumbers = this.getNumbers(query);
-    const searchableFields = this.getSearchableFields();
+    const searchableFields = this.getSearchableFields(useIdentifier);
 
     // eslint-disable-next-line prettier/prettier
     if (contacts.length === 2 && this.getClientCwConfig().mergeBrazilContacts && query.startsWith('+55')) {
@@ -553,15 +561,19 @@ export class ChatwootService {
     return numbers;
   }
 
-  private getSearchableFields() {
-    return ['phone_number'];
+  private getSearchableFields(includeIdentifier = false) {
+    const fields = ['phone_number'];
+    if (includeIdentifier) {
+      fields.push('identifier');
+    }
+    return fields;
   }
 
-  private getFilterPayload(query: string) {
+  private getFilterPayload(query: string, includeIdentifier = false) {
     const filterPayload = [];
 
     const numbers = this.getNumbers(query);
-    const fieldsToSearch = this.getSearchableFields();
+    const fieldsToSearch = this.getSearchableFields(includeIdentifier);
 
     fieldsToSearch.forEach((field, index1) => {
       numbers.forEach((number, index2) => {
