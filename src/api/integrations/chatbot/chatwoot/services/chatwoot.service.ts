@@ -2388,8 +2388,17 @@ export class ChatwootService {
     }
   }
 
-  public getNumberFromRemoteJid(remoteJid: string) {
-    return remoteJid.replace(/:\d+/, '').split('@')[0];
+  public getNumberFromRemoteJid(
+    remoteJid: string,
+    phoneNumber?: string,
+  ): string | undefined {
+    const cleaned = remoteJid.replace(/:\d+/, '');
+
+    if (cleaned.endsWith('@lid')) {
+      return phoneNumber;
+    }
+
+    return cleaned.split('@')[0];
   }
 
   public startImportHistoryMessages(instance: InstanceDto) {
