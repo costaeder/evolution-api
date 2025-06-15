@@ -47,6 +47,7 @@ Evolution API supports various integrations to enhance its functionality. Below 
 
 - [Chatwoot](https://www.chatwoot.com/):
   - Direct integration with Chatwoot for handling customer service for your business.
+  - History import now supports Linked IDs, preserving JIDs ending in `@lid`.
 
 - [RabbitMQ](https://www.rabbitmq.com/):
   - Receive events from the Evolution API via RabbitMQ.

@@ -15,6 +15,7 @@ type ChatwootUser = {
 
 type FksChatwoot = {
   phone_number: string;
+  identifier: string;
   contact_id: string;
   conversation_id: string;
 };
@@ -107,6 +108,7 @@ class ChatwootImport {
         }
 
         // inserting contacts in chatwoot db
+        // identifier may contain a phone-based JID or Linked ID (e.g. *@lid*)
         let sqlInsert = `INSERT INTO contacts
           (name, phone_number, account_id, identifier, created_at, updated_at) VALUES `;
         const bindInsert = [provider.accountId];
@@ -234,10 +236,10 @@ class ChatwootImport {
       });
 
       const allMessagesMappedByPhoneNumber = this.createMessagesMapByPhoneNumber(messagesOrdered);
-      // Map structure: +552199999999 => { first message timestamp from number, last message timestamp from number}
+      // Map structure: remoteJid => { first message timestamp from chat, last message timestamp }
       const phoneNumbersWithTimestamp = new Map<string, firstLastTimestamp>();
-      allMessagesMappedByPhoneNumber.forEach((messages: Message[], phoneNumber: string) => {
-        phoneNumbersWithTimestamp.set(phoneNumber, {
+      allMessagesMappedByPhoneNumber.forEach((messages: Message[], remoteJid: string) => {
+        phoneNumbersWithTimestamp.set(remoteJid, {
           first: messages[0]?.messageTimestamp as any as number,
           last: messages[messages.length - 1]?.messageTimestamp as any as number,
         });
@@ -249,7 +251,7 @@ class ChatwootImport {
       const batchSize = 4000;
       let messagesChunk: Message[] = this.sliceIntoChunks(messagesOrdered, batchSize);
       while (messagesChunk.length > 0) {
-        // Map structure: +552199999999 => Message[]
+        // Map structure: remoteJid => Message[]
         const messagesByPhoneNumber = this.createMessagesMapByPhoneNumber(messagesChunk);
 
         if (messagesByPhoneNumber.size > 0) {
@@ -347,12 +349,17 @@ class ChatwootImport {
 
     const bindValues = [provider.accountId, inbox.id];
     const phoneNumberBind = Array.from(messagesByPhoneNumber.keys())
-      .map((phoneNumber) => {
-        const phoneNumberTimestamp = phoneNumbersWithTimestamp.get(phoneNumber);
+      .map((remoteJid) => {
+        const phoneNumberTimestamp = phoneNumbersWithTimestamp.get(remoteJid);
 
         if (phoneNumberTimestamp) {
+          const phoneNumber = `+${remoteJid.split('@')[0]}`;
           bindValues.push(phoneNumber);
           let bindStr = `($${bindValues.length},`;
+
+          const identifier = remoteJid.includes('@') ? remoteJid : `${remoteJid}@s.whatsapp.net`;
+          bindValues.push(identifier);
+          bindStr += `$${bindValues.length},`;
 
           bindValues.push(phoneNumberTimestamp.first);
           bindStr += `$${bindValues.length},`;
@@ -366,10 +373,10 @@ class ChatwootImport {
     // select (or insert when necessary) data from tables contacts, contact_inboxes, conversations from chatwoot db
     const sqlFromChatwoot = `WITH
               phone_number AS (
-                SELECT phone_number, created_at::INTEGER, last_activity_at::INTEGER FROM (
-                  VALUES 
+                SELECT phone_number, identifier, created_at::INTEGER, last_activity_at::INTEGER FROM (
+                  VALUES
                    ${phoneNumberBind}
-                 ) as t (phone_number, created_at, last_activity_at)
+                 ) as t (phone_number, identifier, created_at, last_activity_at)
               ),
 
               only_new_phone_number AS (
@@ -388,8 +395,8 @@ class ChatwootImport {
 
               new_contact AS (
                 INSERT INTO contacts (name, phone_number, account_id, identifier, created_at, updated_at)
-                SELECT REPLACE(p.phone_number, '+', ''), p.phone_number, $1, CONCAT(REPLACE(p.phone_number, '+', ''),
-                  '@s.whatsapp.net'), to_timestamp(p.created_at), to_timestamp(p.last_activity_at)
+                SELECT REPLACE(p.phone_number, '+', ''), p.phone_number, $1, p.identifier,
+                  to_timestamp(p.created_at), to_timestamp(p.last_activity_at)
                 FROM only_new_phone_number AS p
                 ON CONFLICT(identifier, account_id) DO UPDATE SET updated_at = EXCLUDED.updated_at
                 RETURNING id, phone_number, created_at, updated_at
@@ -411,13 +418,13 @@ class ChatwootImport {
                 RETURNING id, contact_id
               )
 
-              SELECT new_contact.phone_number, new_conversation.contact_id, new_conversation.id AS conversation_id
-              FROM new_conversation 
+              SELECT new_contact.phone_number, new_contact.identifier, new_conversation.contact_id, new_conversation.id AS conversation_id
+              FROM new_conversation
               JOIN new_contact ON new_conversation.contact_id = new_contact.id
 
               UNION
 
-              SELECT p.phone_number, c.id contact_id, con.id conversation_id
+              SELECT p.phone_number, c.identifier, c.id contact_id, con.id conversation_id
                 FROM phone_number p
               JOIN contacts c ON c.phone_number = p.phone_number
               JOIN contact_inboxes ci ON ci.contact_id = c.id AND ci.inbox_id = $2
@@ -426,7 +433,7 @@ class ChatwootImport {
 
     const fksFromChatwoot = await pgClient.query(sqlFromChatwoot, bindValues);
 
-    return new Map(fksFromChatwoot.rows.map((item: FksChatwoot) => [item.phone_number, item]));
+    return new Map(fksFromChatwoot.rows.map((item: FksChatwoot) => [item.identifier, item]));
   }
 
   public async getChatwootUser(provider: ChatwootModel): Promise<ChatwootUser> {
@@ -449,12 +456,11 @@ class ChatwootImport {
         remoteJid: string;
       };
       if (!this.isIgnorePhoneNumber(key?.remoteJid)) {
-        const phoneNumber = key?.remoteJid?.split('@')[0];
-        if (phoneNumber) {
-          const phoneNumberPlus = `+${phoneNumber}`;
-          const messages = acc.has(phoneNumberPlus) ? acc.get(phoneNumberPlus) : [];
-          messages.push(message);
-          acc.set(phoneNumberPlus, messages);
+        const jid = key?.remoteJid;
+        if (jid) {
+          const msgs = acc.has(jid) ? acc.get(jid) : [];
+          msgs.push(message);
+          acc.set(jid, msgs);
         }
       }
 
