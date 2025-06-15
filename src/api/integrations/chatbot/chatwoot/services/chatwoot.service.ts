@@ -1897,7 +1897,11 @@ export class ChatwootService {
           return;
         }
 
-        if (ignoreContacts && body?.key?.remoteJid.endsWith('@s.whatsapp.net')) {
+        if (
+          ignoreContacts &&
+          (body?.key?.remoteJid.endsWith('@s.whatsapp.net') ||
+            body?.key?.remoteJid.endsWith('@lid'))
+        ) {
           this.logger.warn('Ignoring message from contact: ' + body?.key?.remoteJid);
           return;
         }

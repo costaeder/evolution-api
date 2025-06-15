@@ -38,7 +38,12 @@ export const chatwootSchema: JSONSchema7 = {
     mergeBrazilContacts: { type: 'boolean', enum: [true, false] },
     importMessages: { type: 'boolean', enum: [true, false] },
     daysLimitImportMessages: { type: 'number' },
-    ignoreJids: { type: 'array', items: { type: 'string' } },
+    ignoreJids: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        "List of JIDs to ignore. Use '@g.us' to skip all groups and '@s.whatsapp.net' to skip all contacts (including '@lid').",
+    },
   },
   required: ['enabled', 'accountId', 'token', 'url', 'signMsg', 'reopenConversation', 'conversationPending'],
   ...isNotEmpty('enabled', 'accountId', 'token', 'url', 'signMsg', 'reopenConversation', 'conversationPending'),
