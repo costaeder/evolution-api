@@ -9,6 +9,7 @@ import { WAMonitoringService } from '@api/services/monitor.service';
 import { Events } from '@api/types/wa.types';
 import { Chatwoot, ConfigService, Database, HttpServer } from '@config/env.config';
 import { Logger } from '@config/logger.config';
+import { extractNumber } from '@utils/extractNumber';
 import ChatwootClient, {
   ChatwootAPIConfig,
   contact,
@@ -613,7 +614,7 @@ export class ChatwootService {
       const isGroup = body.key.remoteJid.includes('@g.us');
       this.logger.verbose(`Is group: ${isGroup}`);
 
-      const chatId = isGroup ? body.key.remoteJid : body.key.remoteJid.split('@')[0];
+      const chatId = isGroup ? body.key.remoteJid : extractNumber(body.key.remoteJid);
       this.logger.verbose(`Chat ID: ${chatId}`);
 
       let nameContact: string;
