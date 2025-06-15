@@ -145,7 +145,10 @@ export class ChatbotController {
         return true;
       }
 
-      if (ignoreContacts && remoteJid.endsWith('@s.whatsapp.net')) {
+      if (
+        ignoreContacts &&
+        (remoteJid.endsWith('@s.whatsapp.net') || remoteJid.endsWith('@lid'))
+      ) {
         this.logger.warn('Ignoring message from contact: ' + remoteJid);
         return true;
       }
