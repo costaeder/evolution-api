@@ -226,7 +226,11 @@ class ChatwootImport {
         const aMessageTimestamp = a.messageTimestamp as any as number;
         const bMessageTimestamp = b.messageTimestamp as any as number;
 
-        return parseInt(aKey.remoteJid) - parseInt(bKey.remoteJid) || aMessageTimestamp - bMessageTimestamp;
+        if (aKey.remoteJid === bKey.remoteJid) {
+          return aMessageTimestamp - bMessageTimestamp;
+        }
+
+        return aKey.remoteJid.localeCompare(bKey.remoteJid);
       });
 
       const allMessagesMappedByPhoneNumber = this.createMessagesMapByPhoneNumber(messagesOrdered);
