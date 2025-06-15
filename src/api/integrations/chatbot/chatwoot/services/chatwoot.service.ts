@@ -29,6 +29,7 @@ import FormData from 'form-data';
 import Jimp from 'jimp';
 import Long from 'long';
 import mimeTypes from 'mime-types';
+import { createJid } from '@utils/createJid';
 import path from 'path';
 import { Readable } from 'stream';
 
@@ -1236,8 +1237,13 @@ export class ChatwootService {
         return { message: 'bot' };
       }
 
-      const chatId =
-        body.conversation.meta.sender?.identifier || body.conversation.meta.sender?.phone_number.replace('+', '');
+      const identifier = body.conversation.meta.sender?.identifier;
+      const senderPhone = body.conversation.meta.sender?.phone_number?.replace('+', '');
+
+      let chatId = identifier || senderPhone;
+      if (identifier?.endsWith('@lid') && senderPhone) {
+        chatId = senderPhone;
+      }
       // Chatwoot to Whatsapp
       const messageReceived = body.content
         ? body.content
@@ -1384,7 +1390,7 @@ export class ChatwootService {
 
               const messageSent = await this.sendAttachment(
                 waInstance,
-                chatId,
+                createJid(chatId),
                 attachment.data_url,
                 formatText,
                 options,
@@ -1409,7 +1415,7 @@ export class ChatwootService {
             }
           } else {
             const data: SendTextDto = {
-              number: chatId,
+              number: createJid(chatId),
               text: formatText,
               delay: 1200,
               quoted: await this.getQuotedMessage(body, instance),
@@ -1502,8 +1508,8 @@ export class ChatwootService {
 
       if (body.message_type === 'template' && body.event === 'message_created') {
         const data: SendTextDto = {
-          number: chatId,
-          text: body.content.replace(/\\\r\n|\\\n|\n/g, '\n'),
+          number: createJid(chatId),
+          text: body.content.replace(/\\r\\n|\\n|\n/g, '\n'),
           delay: 1200,
         };
 
