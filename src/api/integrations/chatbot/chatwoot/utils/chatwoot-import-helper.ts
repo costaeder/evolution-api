@@ -117,7 +117,11 @@ class ChatwootImport {
           bindInsert.push(contact.pushName);
           const bindName = `$${bindInsert.length}`;
 
-          bindInsert.push(`+${contact.remoteJid.split('@')[0]}`);
+          const phone = this.getNumberFromRemoteJid(
+            contact.remoteJid,
+            (contact as any).phoneNumber,
+          );
+          bindInsert.push(phone ? `+${phone}` : null);
           const bindPhoneNumber = `$${bindInsert.length}`;
 
           bindInsert.push(contact.remoteJid);
@@ -353,8 +357,8 @@ class ChatwootImport {
         const phoneNumberTimestamp = phoneNumbersWithTimestamp.get(remoteJid);
 
         if (phoneNumberTimestamp) {
-          const phoneNumber = `+${remoteJid.split('@')[0]}`;
-          bindValues.push(phoneNumber);
+          const phone = this.getNumberFromRemoteJid(remoteJid);
+          bindValues.push(phone ? `+${phone}` : null);
           let bindStr = `($${bindValues.length},`;
 
           const identifier = remoteJid.includes('@') ? remoteJid : `${remoteJid}@s.whatsapp.net`;
@@ -556,6 +560,17 @@ class ChatwootImport {
 
   public isIgnorePhoneNumber(remoteJid: string) {
     return this.isGroup(remoteJid) || remoteJid === 'status@broadcast' || remoteJid === '0@s.whatsapp.net';
+  }
+
+  public getNumberFromRemoteJid(
+    remoteJid: string,
+    phoneNumber?: string,
+  ): string | null {
+    const cleaned = remoteJid.replace(/:\d+/, '');
+    if (cleaned.endsWith('@lid')) {
+      return phoneNumber ?? null;
+    }
+    return cleaned.split('@')[0];
   }
 
   public updateMessageSourceID(messageId: string | number, sourceId: string) {
