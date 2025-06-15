@@ -313,7 +313,10 @@ export class ChatwootService {
         avatar_url: avatar_url,
       };
 
-      if ((jid && jid.includes('@')) || !jid) {
+      const isLid = jid?.endsWith('@lid');
+      if ((jid && jid.includes('@') && !isLid) || !jid) {
+        data['phone_number'] = `+${phoneNumber}`;
+      } else if (isLid && phoneNumber && phoneNumber !== jid?.split('@')[0]) {
         data['phone_number'] = `+${phoneNumber}`;
       }
     } else {
