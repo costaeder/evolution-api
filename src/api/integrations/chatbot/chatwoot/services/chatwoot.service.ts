@@ -314,13 +314,7 @@ export class ChatwootService {
         avatar_url: avatar_url,
       };
 
-      const isLid = jid?.endsWith('@lid');
-
-      if (isLid) {
-        if (phoneNumber && phoneNumber !== jid?.split('@')[0]) {
-          data.phone_number = `+${phoneNumber}`;
-        }
-      } else if (phoneNumber) {
+      if (phoneNumber && !phoneNumber.includes('@')) {
         data.phone_number = `+${phoneNumber}`;
       }
     } else {
@@ -633,7 +627,10 @@ export class ChatwootService {
       this.logger.verbose(`Is group: ${isGroup}`);
 
       const chatId = body.key.remoteJid;
-      const phoneNumber = isGroup ? chatId : this.getNumberFromRemoteJid(chatId);
+      let phoneNumber = isGroup ? chatId : this.getNumberFromRemoteJid(chatId);
+      if (!phoneNumber && chatId.endsWith('@lid')) {
+        phoneNumber = chatId;
+      }
       this.logger.verbose(`Chat ID: ${chatId}`);
 
       let nameContact: string;
