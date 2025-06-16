@@ -16,6 +16,7 @@ type ChatwootUser = {
 
 type FksChatwoot = {
   phone_number: string;
+  identifier: string;
   contact_id: string;
   conversation_id: string;
 };
@@ -108,6 +109,7 @@ class ChatwootImport {
         }
 
         // inserting contacts in chatwoot db
+        // identifier may contain a phone-based JID or Linked ID (e.g. *@lid*)
         let sqlInsert = `INSERT INTO contacts
           (name, phone_number, account_id, identifier, created_at, updated_at) VALUES `;
         const bindInsert = [provider.accountId];
@@ -116,7 +118,11 @@ class ChatwootImport {
           bindInsert.push(contact.pushName);
           const bindName = `$${bindInsert.length}`;
 
-          bindInsert.push(`+${contact.remoteJid.split('@')[0]}`);
+          const phone = this.getNumberFromRemoteJid(
+            contact.remoteJid,
+            (contact as any).phoneNumber,
+          );
+          bindInsert.push(phone ? `+${phone}` : null);
           const bindPhoneNumber = `$${bindInsert.length}`;
 
           bindInsert.push(contact.remoteJid);
@@ -132,6 +138,104 @@ class ChatwootImport {
                         name = EXCLUDED.name,
                         phone_number = EXCLUDED.phone_number,
                         identifier = EXCLUDED.identifier`;
+
+        totalContactsImported += (await pgClient.query(sqlInsert, bindInsert))?.rowCount ?? 0;
+
+        const sqlTags = `SELECT id FROM tags WHERE name = '${provider.nameInbox}' LIMIT 1`;
+
+        const tagData = (await pgClient.query(sqlTags))?.rows[0];
+        let tagId = tagData?.id;
+
+        const sqlTag = `INSERT INTO tags (name, taggings_count) VALUES ('${provider.nameInbox}', ${totalContactsImported}) ON CONFLICT (name) DO UPDATE SET taggings_count = tags.taggings_count + ${totalContactsImported} RETURNING id`;
+
+        tagId = (await pgClient.query(sqlTag))?.rows[0]?.id;
+
+        await pgClient.query(sqlTag);
+
+        let sqlInsertLabel = `INSERT INTO taggings (tag_id, taggable_type, taggable_id, context, created_at) VALUES `;
+
+        contactsChunk.forEach((contact) => {
+          const bindTaggableId = `(SELECT id FROM contacts WHERE identifier = '${contact.remoteJid}' AND account_id = ${provider.accountId})`;
+          sqlInsertLabel += `($1, $2, ${bindTaggableId}, $3, NOW()),`;
+        });
+
+        if (sqlInsertLabel.slice(-1) === ',') {
+          sqlInsertLabel = sqlInsertLabel.slice(0, -1);
+        }
+
+        await pgClient.query(sqlInsertLabel, [tagId, 'Contact', 'labels']);
+
+        contactsChunk = this.sliceIntoChunks(contacts, 3000);
+      }
+
+      this.deleteHistoryContacts(instance);
+
+      return totalContactsImported;
+    } catch (error) {
+      this.logger.error(`Error on import history contacts: ${error.toString()}`);
+    }
+  }
+
+  public async getExistingSourceIds(sourceIds: string[]): Promise<Set<string>> {
+    try {
+      const existingSourceIdsSet = new Set<string>();
+
+      if (sourceIds.length === 0) {
+        return existingSourceIdsSet;
+      }
+
+      const formattedSourceIds = sourceIds.map((sourceId) => `WAID:${sourceId.replace('WAID:', '')}`); // Make sure the sourceId is always formatted as WAID:1234567890
+      const query = 'SELECT source_id FROM messages WHERE source_id = ANY($1)';
+      const pgClient = postgresClient.getChatwootConnection();
+      const result = await pgClient.query(query, [formattedSourceIds]);
+
+      for (const row of result.rows) {
+        existingSourceIdsSet.add(row.source_id);
+      }
+
+      return existingSourceIdsSet;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  public async importHistoryMessages(
+    instance: InstanceDto,
+    chatwootService: ChatwootService,
+    inbox: inbox,
+    provider: ChatwootModel,
+  ) {
+    try {
+      const pgClient = postgresClient.getChatwootConnection();
+
+      const chatwootUser = await this.getChatwootUser(provider);
+      if (!chatwootUser) {
+        throw new Error('User not found to import messages.');
+      }
+
+      let totalMessagesImported = 0;
+
+      let messagesOrdered = this.historyMessages.get(instance.instanceName) || [];
+      if (messagesOrdered.length === 0) {
+        return 0;
+      }
+
+      // ordering messages by number and timestamp asc
+      messagesOrdered.sort((a, b) => {
+        const aKey = a.key as {
+          remoteJid: string;
+        };
+
+        const bKey = b.key as {
+          remoteJid: string;
+        };
+
+        const aMessageTimestamp = a.messageTimestamp as any as number;
+        const bMessageTimestamp = b.messageTimestamp as any as number;
+
+        if (aKey.remoteJid === bKey.remoteJid) {
+          return aMessageTimestamp - bMessageTimestamp;
+        }
 
         totalContactsImported += (await pgClient.query(sqlInsert, bindInsert))?.rowCount ?? 0;
 
@@ -624,18 +728,31 @@ class ChatwootImport {
     }
   }
 
+  public async getChatwootUser(provider: ChatwootModel): Promise<ChatwootUser> {
+    try {
+      const pgClient = postgresClient.getChatwootConnection();
+
+      const sqlUser = `SELECT owner_type AS user_type, owner_id AS user_id
+                         FROM access_tokens
+                       WHERE token = $1`;
+
+      return (await pgClient.query(sqlUser, [provider.token]))?.rows[0] || false;
+    } catch (error) {
+      this.logger.error(`Error on getChatwootUser: ${error.toString()}`);
+    }
+  }
+
   public createMessagesMapByPhoneNumber(messages: Message[]): Map<string, Message[]> {
     return messages.reduce((acc: Map<string, Message[]>, message: Message) => {
       const key = message?.key as {
         remoteJid: string;
       };
       if (!this.isIgnorePhoneNumber(key?.remoteJid)) {
-        const phoneNumber = key?.remoteJid?.split('@')[0];
-        if (phoneNumber) {
-          const phoneNumberPlus = `+${phoneNumber}`;
-          const messages = acc.has(phoneNumberPlus) ? acc.get(phoneNumberPlus) : [];
-          messages.push(message);
-          acc.set(phoneNumberPlus, messages);
+        const jid = key?.remoteJid;
+        if (jid) {
+          const msgs = acc.has(jid) ? acc.get(jid) : [];
+          msgs.push(message);
+          acc.set(jid, msgs);
         }
       }
 
@@ -735,12 +852,15 @@ class ChatwootImport {
     return this.isGroup(remoteJid) || remoteJid === 'status@broadcast' || remoteJid === '0@s.whatsapp.net';
   }
 
-  public updateMessageSourceID(messageId: string | number, sourceId: string) {
-    const pgClient = postgresClient.getChatwootConnection();
-
-    const sql = `UPDATE messages SET source_id = $1, status = 0, created_at = NOW(), updated_at = NOW() WHERE id = $2;`;
-
-    return pgClient.query(sql, [`WAID:${sourceId}`, messageId]);
+  public getNumberFromRemoteJid(
+    remoteJid: string,
+    phoneNumber?: string,
+  ): string | null {
+    const cleaned = remoteJid.replace(/:\d+/, '');
+    if (cleaned.endsWith('@lid')) {
+      return phoneNumber ?? null;
+    }
+    return cleaned.split('@')[0];
   }
 
   private async safeRefreshConversation(

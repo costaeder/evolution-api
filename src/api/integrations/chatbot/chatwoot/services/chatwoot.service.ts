@@ -29,6 +29,7 @@ import FormData from 'form-data';
 import Jimp from 'jimp';
 import Long from 'long';
 import mimeTypes from 'mime-types';
+import { createJid } from '@utils/createJid';
 import path from 'path';
 import { Readable } from 'stream';
 
@@ -520,6 +521,36 @@ export class ChatwootService {
           mergee_contact_id: contacts.find((contact) => contact.phone_number.length === 13)?.id,
         },
       });
+    }
+  
+    if (!contact || contact?.payload?.length === 0) {
+      this.logger.warn('contact not found');
+      return null;
+    }
+  
+    const resolvedContact = isGroup
+      ? contact.payload.find((c) => c.identifier === query)
+      : contact.payload.length > 1
+      ? this.findContactInContactList(contact.payload, query, searchByIdentifier)
+      : contact.payload[0];
+  
+    // Armazena no cache
+    await this.cache.set(cacheKey, resolvedContact); 
+    this.logger.verbose(`Contact cached with key: ${cacheKey}`);
+  
+    return resolvedContact;
+  }
+
+  private async mergeBrazilianContacts(contacts: any[]) {
+    try {
+      const contact = await chatwootRequest(this.getClientCwConfig(), {
+        method: 'POST',
+        url: `/api/v1/accounts/${this.provider.accountId}/actions/contact_merge`,
+        body: {
+          base_contact_id: contacts.find((contact) => contact.phone_number.length === 14)?.id,
+          mergee_contact_id: contacts.find((contact) => contact.phone_number.length === 13)?.id,
+        },
+      });
 
       return contact;
     } catch {
@@ -528,9 +559,13 @@ export class ChatwootService {
     }
   }
 
-  private findContactInContactList(contacts: any[], query: string) {
+  private findContactInContactList(
+    contacts: any[],
+    query: string,
+    useIdentifier = false,
+  ) {
     const phoneNumbers = this.getNumbers(query);
-    const searchableFields = this.getSearchableFields();
+    const searchableFields = this.getSearchableFields(useIdentifier);
 
     // eslint-disable-next-line prettier/prettier
     if (contacts.length === 2 && this.getClientCwConfig().mergeBrazilContacts && query.startsWith('+55')) {
@@ -576,11 +611,15 @@ export class ChatwootService {
     return numbers;
   }
 
-  private getSearchableFields() {
-    return ['phone_number'];
+  private getSearchableFields(includeIdentifier = false) {
+    const fields = ['phone_number'];
+    if (includeIdentifier) {
+      fields.push('identifier');
+    }
+    return fields;
   }
 
-  private getFilterPayload(query: string) {
+  private getFilterPayload(query: string, includeIdentifier = false) {
     const filterPayload = [];
 
     const numbers = this.getNumbers(query);
@@ -2579,6 +2618,181 @@ export class ChatwootService {
         and inbox_id = ${inbox.id}
         and created_at >= now() - interval '6h'
         order by created_at desc`;
+
+      const messagesData = (await this.pgClient.query(sqlMessages))?.rows;
+      const ids: string[] = messagesData
+        .filter((message) => !!message.source_id)
+        .map((message) => message.source_id.replace('WAID:', ''));
+
+      const savedMessages = await this.prismaRepository.message.findMany({
+        where: {
+          Instance: { name: instance.instanceName },
+          messageTimestamp: { gte: dayjs().subtract(6, 'hours').unix() },
+          AND: ids.map((id) => ({ key: { path: ['id'], not: id } })),
+        },
+      });
+
+      const filteredMessages = savedMessages.filter(
+        (msg: any) => !chatwootImport.isIgnorePhoneNumber(msg.key?.remoteJid),
+      );
+      const messagesRaw: any[] = [];
+      for (const m of filteredMessages) {
+        if (!m.message || !m.key || !m.messageTimestamp) {
+          continue;
+        }
+
+        if (Long.isLong(m?.messageTimestamp)) {
+          m.messageTimestamp = m.messageTimestamp?.toNumber();
+        }
+
+        messagesRaw.push(prepareMessage(m as any));
+      }
+
+      this.addHistoryMessages(
+        instance,
+        messagesRaw.filter((msg) => !chatwootImport.isIgnorePhoneNumber(msg.key?.remoteJid)),
+      );
+
+      await chatwootImport.importHistoryMessages(instance, this, inbox, this.provider);
+      const waInstance = this.waMonitor.waInstances[instance.instanceName];
+      waInstance.clearCacheChatwoot();
+    } catch (error) {
+      return;
+    }
+  }
+
+  public startImportHistoryMessages(instance: InstanceDto) {
+    if (!this.isImportHistoryAvailable()) {
+      return;
+    }
+
+    this.createBotMessage(instance, i18next.t('cw.import.startImport'), 'incoming');
+  }
+
+  public isImportHistoryAvailable() {
+    const uri = this.configService.get<Chatwoot>('CHATWOOT').IMPORT.DATABASE.CONNECTION.URI;
+
+    return uri && uri !== 'postgres://user:password@hostname:port/dbname';
+  }
+
+  public addHistoryMessages(instance: InstanceDto, messagesRaw: MessageModel[]) {
+    if (!this.isImportHistoryAvailable()) {
+      return;
+    }
+
+    chatwootImport.addHistoryMessages(instance, messagesRaw);
+  }
+
+  public addHistoryContacts(instance: InstanceDto, contactsRaw: ContactModel[]) {
+    if (!this.isImportHistoryAvailable()) {
+      return;
+    }
+
+    return chatwootImport.addHistoryContacts(instance, contactsRaw);
+  }
+
+  public async importHistoryMessages(instance: InstanceDto) {
+    if (!this.isImportHistoryAvailable()) {
+      return;
+    }
+
+    this.createBotMessage(instance, i18next.t('cw.import.importingMessages'), 'incoming');
+
+    const totalMessagesImported = await chatwootImport.importHistoryMessages(
+      instance,
+      this,
+      await this.getInbox(instance),
+      this.provider,
+    );
+    this.updateContactAvatarInRecentConversations(instance);
+
+    const msg = Number.isInteger(totalMessagesImported)
+      ? i18next.t('cw.import.messagesImported', { totalMessagesImported })
+      : i18next.t('cw.import.messagesException');
+
+    this.createBotMessage(instance, msg, 'incoming');
+
+    return totalMessagesImported;
+  }
+
+  public async updateContactAvatarInRecentConversations(instance: InstanceDto, limitContacts = 100) {
+    try {
+      if (!this.isImportHistoryAvailable()) {
+        return;
+      }
+
+      const client = await this.clientCw(instance);
+      if (!client) {
+        this.logger.warn('client not found');
+        return null;
+      }
+
+      const inbox = await this.getInbox(instance);
+      if (!inbox) {
+        this.logger.warn('inbox not found');
+        return null;
+      }
+
+      const recentContacts = await chatwootImport.getContactsOrderByRecentConversations(
+        inbox,
+        this.provider,
+        limitContacts,
+      );
+
+      const contactIdentifiers = recentContacts
+        .map((contact) => contact.identifier)
+        .filter((identifier) => identifier !== null);
+
+      const contactsWithProfilePicture = (
+        await this.prismaRepository.contact.findMany({
+          where: {
+            instanceId: instance.instanceId,
+            id: {
+              in: contactIdentifiers,
+            },
+            profilePicUrl: {
+              not: null,
+            },
+          },
+        })
+      ).reduce((acc: Map<string, ContactModel>, contact: ContactModel) => acc.set(contact.id, contact), new Map());
+
+      recentContacts.forEach(async (contact) => {
+        if (contactsWithProfilePicture.has(contact.identifier)) {
+          client.contacts.update({
+            accountId: this.provider.accountId,
+            id: contact.id,
+            data: {
+              avatar_url: contactsWithProfilePicture.get(contact.identifier).profilePictureUrl || null,
+            },
+          });
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error on update avatar in recent conversations: ${error.toString()}`);
+    }
+  }
+
+  public async syncLostMessages(
+    instance: InstanceDto,
+    chatwootConfig: ChatwootDto,
+    prepareMessage: (message: any) => any,
+  ) {
+    try {
+      if (!this.isImportHistoryAvailable()) {
+        return;
+      }
+      if (!this.configService.get<Database>('DATABASE').SAVE_DATA.MESSAGE_UPDATE) {
+        return;
+      }
+
+      const inbox = await this.getInbox(instance);
+
+      const sqlMessages = `select * from messages m
+      where account_id = ${chatwootConfig.accountId}
+      and inbox_id = ${inbox.id}
+      and created_at >= now() - interval '6h'
+      order by created_at desc`;
 
       const messagesData = (await this.pgClient.query(sqlMessages))?.rows;
       const ids: string[] = messagesData

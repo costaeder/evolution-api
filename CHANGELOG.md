@@ -1,3 +1,9 @@
+# 2.2.4 (2025-02-24)
+
+### Changed
+
+* Treat `@lid` JIDs as contacts in Chatwoot ignore checks
+
 # 2.2.3 (2025-02-03 11:52)
 
 ### Fixed

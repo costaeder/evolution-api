@@ -202,6 +202,9 @@ export class EvolutionStartupService extends ChannelStartupService {
           data: messageRaw,
         });
 
+
+        this.logger.verbose('Message received: ');
+
         await this.updateContact({
           remoteJid: messageRaw.key.remoteJid,
           pushName: messageRaw.pushName,
@@ -214,6 +217,35 @@ export class EvolutionStartupService extends ChannelStartupService {
   }
 
   private async updateContact(data: { remoteJid: string; pushName?: string; profilePicUrl?: string }) {
+    const contact = await this.prismaRepository.contact.findFirst({
+      where: { instanceId: this.instanceId, remoteJid: data.remoteJid },
+    });
+
+    if (contact) {
+      const contactRaw: any = {
+        remoteJid: data.remoteJid,
+        pushName: data?.pushName,
+        instanceId: this.instanceId,
+        profilePicUrl: data?.profilePicUrl,
+      };
+
+      this.sendDataWebhook(Events.CONTACTS_UPDATE, contactRaw);
+
+      if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
+        await this.chatwootService.eventWhatsapp(
+          Events.CONTACTS_UPDATE,
+          { instanceName: this.instance.name, instanceId: this.instanceId },
+          contactRaw,
+        );
+      }
+
+      await this.prismaRepository.contact.updateMany({
+        where: { remoteJid: contact.remoteJid, instanceId: this.instanceId },
+        data: contactRaw,
+      });
+      return;
+    }
+
     const contactRaw: any = {
       remoteJid: data.remoteJid,
       pushName: data?.pushName,
