@@ -1171,6 +1171,17 @@ export class BaileysStartupService extends ChannelStartupService {
     ) => {
       try {
         for (const received of messages) {
+          const original = received.key.remoteJid;
+
+          if (original?.endsWith('@lid')) {
+            this.logger.error({ original, received });
+
+            const numeric = this.client.contacts?.[original]?.id;
+
+            if (numeric && !numeric.endsWith('@lid')) {
+              received.key.remoteJid = numeric;
+            }
+          }
           if (received.message?.conversation || received.message?.extendedTextMessage?.text) {
             const text = received.message?.conversation || received.message?.extendedTextMessage?.text;
 
@@ -1248,7 +1259,9 @@ export class BaileysStartupService extends ChannelStartupService {
             existingChat.name !== received.pushName &&
             received.pushName.trim().length > 0
           ) {
-            this.sendDataWebhook(Events.CHATS_UPSERT, [{ ...existingChat, name: received.pushName }]);
+            this.sendDataWebhook(Events.CHATS_UPSERT, [
+              { ...existingChat, name: received.pushName, originalJid: original },
+            ]);
             if (this.configService.get<Database>('DATABASE').SAVE_DATA.CHATS) {
               try {
                 await this.prismaRepository.chat.update({
@@ -1261,7 +1274,7 @@ export class BaileysStartupService extends ChannelStartupService {
             }
           }
 
-          const messageRaw = this.prepareMessage(received);
+          const messageRaw = this.prepareMessage(received, original);
 
           const isMedia =
             received?.message?.imageMessage ||
@@ -1429,11 +1442,19 @@ export class BaileysStartupService extends ChannelStartupService {
             where: { remoteJid: received.key.remoteJid, instanceId: this.instanceId },
           });
 
-          const contactRaw: { remoteJid: string; pushName: string; profilePicUrl?: string; instanceId: string } = {
+          const contactRaw = {
             remoteJid: received.key.remoteJid,
+            originalJid: original,
             pushName: received.key.fromMe ? '' : received.key.fromMe == null ? '' : received.pushName,
             profilePicUrl: (await this.profilePicture(received.key.remoteJid)).profilePictureUrl,
             instanceId: this.instanceId,
+          };
+
+          const contactData = {
+            remoteJid: contactRaw.remoteJid,
+            pushName: contactRaw.pushName,
+            profilePicUrl: contactRaw.profilePicUrl,
+            instanceId: contactRaw.instanceId,
           };
 
           if (contactRaw.remoteJid === 'status@broadcast') {
@@ -1454,8 +1475,8 @@ export class BaileysStartupService extends ChannelStartupService {
             if (this.configService.get<Database>('DATABASE').SAVE_DATA.CONTACTS)
               await this.prismaRepository.contact.upsert({
                 where: { remoteJid_instanceId: { remoteJid: contactRaw.remoteJid, instanceId: contactRaw.instanceId } },
-                create: contactRaw,
-                update: contactRaw,
+                create: contactData,
+                update: contactData,
               });
 
             continue;
@@ -1471,8 +1492,8 @@ export class BaileysStartupService extends ChannelStartupService {
                   instanceId: contactRaw.instanceId,
                 },
               },
-              update: contactRaw,
-              create: contactRaw,
+              update: contactData,
+              create: contactData,
             });
 
           if (contactRaw.remoteJid.includes('@s.whatsapp')) {
@@ -4449,12 +4470,16 @@ export class BaileysStartupService extends ChannelStartupService {
     throw new Error('Method not available in the Baileys service');
   }
 
-  private prepareMessage(message: proto.IWebMessageInfo): any {
+  private prepareMessage(
+    message: proto.IWebMessageInfo,
+    originalJid?: string,
+  ): any {
     const contentType = getContentType(message.message);
     const contentMsg = message?.message[contentType] as any;
 
     const messageRaw = {
       key: message.key,
+      originalJid: originalJid ?? message.key.remoteJid,
       pushName: message.pushName,
       status: status[message.status],
       message: { ...message.message },
