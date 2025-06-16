@@ -164,8 +164,6 @@ class ChatwootImport {
         }
 
         await pgClient.query(sqlInsertLabel, [tagId, 'Contact', 'labels']);
-
-        contactsChunk = this.sliceIntoChunks(contacts, 3000);
       }
 
       this.deleteHistoryContacts(instance);
@@ -589,8 +587,9 @@ class ChatwootImport {
 
       resultMap.set(rawPhone, {
         phone_number: normalizedWith,
+        identifier: jidWith,
         contact_id: String(contact.id),
-        conversation_id: String(conversationId)
+        conversation_id: String(conversationId),
       });
     }
 
@@ -617,20 +616,6 @@ class ChatwootImport {
 
 
 
-
-  public async getChatwootUser(provider: ChatwootModel): Promise<ChatwootUser> {
-    try {
-      const pgClient = postgresClient.getChatwootConnection();
-
-      const sqlUser = `SELECT owner_type AS user_type, owner_id AS user_id
-                         FROM access_tokens
-                       WHERE token = $1`;
-
-      return (await pgClient.query(sqlUser, [provider.token]))?.rows[0] || false;
-    } catch (error) {
-      this.logger.error(`Error on getChatwootUser: ${error.toString()}`);
-    }
-  }
 
   public async getChatwootUser(provider: ChatwootModel): Promise<ChatwootUser> {
     try {
@@ -765,6 +750,15 @@ class ChatwootImport {
       return phoneNumber ?? null;
     }
     return cleaned.split('@')[0];
+  }
+
+  public updateMessageSourceID(messageId: string | number, sourceId: string) {
+    const pgClient = postgresClient.getChatwootConnection();
+
+    const sql =
+      'UPDATE messages SET source_id = $1, status = 0, created_at = NOW(), updated_at = NOW() WHERE id = $2;';
+
+    return pgClient.query(sql, [`WAID:${sourceId}`, messageId]);
   }
 
   private async safeRefreshConversation(
