@@ -554,36 +554,6 @@ export class ChatwootService {
           mergee_contact_id: contacts.find((contact) => contact.phone_number.length === 13)?.id,
         },
       });
-    }
-  
-    if (!contact || contact?.payload?.length === 0) {
-      this.logger.warn('contact not found');
-      return null;
-    }
-  
-    const resolvedContact = isGroup
-      ? contact.payload.find((c) => c.identifier === query)
-      : contact.payload.length > 1
-      ? this.findContactInContactList(contact.payload, query, searchByIdentifier)
-      : contact.payload[0];
-  
-    // Armazena no cache
-    await this.cache.set(cacheKey, resolvedContact); 
-    this.logger.verbose(`Contact cached with key: ${cacheKey}`);
-  
-    return resolvedContact;
-  }
-
-  private async mergeBrazilianContacts(contacts: any[]) {
-    try {
-      const contact = await chatwootRequest(this.getClientCwConfig(), {
-        method: 'POST',
-        url: `/api/v1/accounts/${this.provider.accountId}/actions/contact_merge`,
-        body: {
-          base_contact_id: contacts.find((contact) => contact.phone_number.length === 14)?.id,
-          mergee_contact_id: contacts.find((contact) => contact.phone_number.length === 13)?.id,
-        },
-      });
 
       return contact;
     } catch {
