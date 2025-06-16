@@ -50,8 +50,24 @@ export class ChatwootService {
     private readonly waMonitor: WAMonitoringService,
     private readonly configService: ConfigService,
     private readonly prismaRepository: PrismaRepository,
-    private readonly cache: CacheService,
+  private readonly cache: CacheService,
   ) { }
+
+  static extractChatId(body: any): string {
+    const sender = body?.meta?.sender || body?.conversation?.meta?.sender || {};
+    const identifier = sender?.identifier;
+    const phone = sender?.phone_number;
+    if (identifier) {
+      return identifier;
+    }
+    if (phone) {
+      if (phone.includes('@lid')) {
+        return phone;
+      }
+      return phone.replace('+', '');
+    }
+    return '';
+  }
 
   private pgClient = postgresClient.getChatwootConnection();
 
@@ -1340,8 +1356,7 @@ export class ChatwootService {
         return { message: 'bot' };
       }
 
-      const chatId =
-        body.conversation.meta.sender?.identifier || body.conversation.meta.sender?.phone_number.replace('+', '');
+      const chatId = ChatwootService.extractChatId(body);
       // Chatwoot to Whatsapp
       const messageReceived = body.content
         ? body.content
