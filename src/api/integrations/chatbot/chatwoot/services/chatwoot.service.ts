@@ -313,8 +313,17 @@ export class ChatwootService {
     // 2) montar payload
     const data: any = { inbox_id: inboxId, name: name || phoneNumber, avatar_url };
     if (!isGroup) {
-      data.identifier = jid;
-      data.phone_number = `+${phoneNumber}`;
+      const isLinkedId = jid?.endsWith('@lid');
+      if (isLinkedId && jid) {
+        data.identifier = jid;
+        this.logger.verbose(
+          `[ChatwootService][createContact] Linked ID detected for ${jid}; creating contact without phone number`
+        );
+      } else {
+        data.identifier = jid;
+        const isNumeric = /^\d+$/.test(phoneNumber);
+        data.phone_number = isNumeric ? `+${phoneNumber}` : phoneNumber;
+      }
     } else {
       data.identifier = phoneNumber;
     }
