@@ -3756,8 +3756,9 @@ export class BaileysStartupService extends ChannelStartupService {
       }
   
       // Define um contexto completo conforme DownloadMediaMessageContext
+      const pinoLogger: P.Logger = P({ level: 'error' });
       const downloadContext: DownloadMediaMessageContext = {
-        logger: P({ level: 'error' }),
+        logger: pinoLogger,
         reuploadRequest: async (message: WAMessage): Promise<WAMessage> => {
           // Aqui chamamos explicitamente o método que atualiza a mídia;
           // Se o método updateMediaMessage não retornar nada (void), retornamos a própria mensagem.
@@ -3785,7 +3786,7 @@ export class BaileysStartupService extends ChannelStartupService {
           { key: msg.key, message: msg.message },
           'buffer',
           {},
-          { logger: P({ level: 'error' }), reuploadRequest: async (m: WAMessage) => m } // Contexto “vazio”
+          { logger: P({ level: 'error' }) as P.Logger, reuploadRequest: async (m: WAMessage) => m } // Contexto “vazio”
         )) as Buffer;
       }
   
