@@ -3,6 +3,7 @@
 ### Changed
 
 * Treat `@lid` JIDs as contacts in Chatwoot ignore checks
+* Chatwoot integration fully supports Linked IDs (`@lid`) for conversations and contacts.
 
 # 2.2.3 (2025-02-03 11:52)
 
