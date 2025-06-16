@@ -461,7 +461,9 @@ export class ChatwootService {
     }
   
     const isGroup = phoneNumber.includes('@g.us');
-    const query = isGroup ? phoneNumber : `+${phoneNumber}`;
+    const searchByIdentifier =
+      (!/^\d+$/.test(phoneNumber) || phoneNumber.endsWith('@lid')) && !isGroup;
+    const query = isGroup || searchByIdentifier ? phoneNumber : `+${phoneNumber}`;
   
     this.logger.verbose(
       `[ChatwootService][findContact] isGroup=${isGroup}, query=${query}`
@@ -473,6 +475,12 @@ export class ChatwootService {
         response = await client.contacts.search({
           accountId: this.provider.accountId,
           q: query,
+        });
+      } else if (searchByIdentifier) {
+        response = await chatwootRequest(this.getClientCwConfig(), {
+          method: 'POST',
+          url: `/api/v1/accounts/${this.provider.accountId}/contacts/filter`,
+          body: { payload: this.getFilterPayload(query, true) },
         });
       } else {
         response = await chatwootRequest(this.getClientCwConfig(), {
@@ -508,7 +516,7 @@ export class ChatwootService {
       found = payload.find((c: any) => c.identifier === query);
     } else {
       found = payload.length > 1
-        ? this.findContactInContactList(payload, query)
+        ? this.findContactInContactList(payload, query, searchByIdentifier)
         : payload[0];
     }
   
@@ -632,7 +640,7 @@ export class ChatwootService {
     const filterPayload = [];
 
     const numbers = this.getNumbers(query);
-    const fieldsToSearch = this.getSearchableFields();
+    const fieldsToSearch = this.getSearchableFields(includeIdentifier);
 
     fieldsToSearch.forEach((field, index1) => {
       numbers.forEach((number, index2) => {
