@@ -1176,7 +1176,7 @@ export class BaileysStartupService extends ChannelStartupService {
           if (original?.endsWith('@lid')) {
             this.logger.error({ original, received });
 
-            const numeric = this.client.contacts?.[original]?.id;
+            const numeric = (this.client as any).contacts?.[original]?.id;
 
             if (numeric && !numeric.endsWith('@lid')) {
               received.key.remoteJid = numeric;
