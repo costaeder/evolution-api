@@ -1122,8 +1122,14 @@ export class BaileysStartupService extends ChannelStartupService {
         this.sendDataWebhook(Events.MESSAGES_SET, [...messagesRaw]);
 
         if (this.configService.get<Database>('DATABASE').SAVE_DATA.HISTORIC) {
+          // originalJid is kept only for webhook/logic use and is not part of the Prisma schema
+          const dbMessagesRaw = messagesRaw.map((m) => {
+            const data = { ...m } as any;
+            delete data.originalJid;
+            return data;
+          });
           await this.prismaRepository.message.createMany({
-            data: messagesRaw,
+            data: dbMessagesRaw,
             skipDuplicates: true,
           });
         }
@@ -1331,8 +1337,11 @@ export class BaileysStartupService extends ChannelStartupService {
           }
 
           if (this.configService.get<Database>('DATABASE').SAVE_DATA.NEW_MESSAGE) {
+            // originalJid is kept only for webhook/logic use and is not part of the Prisma schema
+            const dbData = { ...messageRaw } as any;
+            delete dbData.originalJid;
             const msg = await this.prismaRepository.message.create({
-              data: messageRaw,
+              data: dbData,
             });
 
             if (received.key.fromMe === false) {
@@ -2343,8 +2352,11 @@ export class BaileysStartupService extends ChannelStartupService {
 
 
       if (this.configService.get<Database>('DATABASE').SAVE_DATA.NEW_MESSAGE) {
+        // originalJid is kept only for webhook/logic use and is not part of the Prisma schema
+        const dbData = { ...messageRaw } as any;
+        delete dbData.originalJid;
         const msg = await this.prismaRepository.message.create({
-          data: messageRaw,
+          data: dbData,
         });
 
         
