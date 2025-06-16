@@ -3452,16 +3452,29 @@ export class BaileysStartupService extends ChannelStartupService {
       },
     });
 
-    const numbersToVerify = jids.users.map(({ jid }) => jid.replace('+', ''));
+    const numbersToVerify = jids.users
+      .filter(({ jid }) => !jid.endsWith('@lid'))
+      .map(({ jid }) => jid.replace('+', ''));
 
     const cachedNumbers = await getOnWhatsappCache(numbersToVerify);
     const filteredNumbers = numbersToVerify.filter(
       (jid) => !cachedNumbers.some((cached) => cached.jidOptions.includes(jid)),
     );
 
-    const verify = await this.client.onWhatsApp(...filteredNumbers);
+    const verify =
+      filteredNumbers.length > 0
+        ? await this.client.onWhatsApp(...filteredNumbers)
+        : [];
     const users: OnWhatsAppDto[] = await Promise.all(
       jids.users.map(async (user) => {
+        if (user.jid.endsWith('@lid')) {
+          return {
+            exists: true,
+            jid: user.jid,
+            name: contacts.find((c) => c.remoteJid === user.jid)?.pushName,
+            number: user.number,
+          } as OnWhatsAppDto;
+        }
         let numberVerified: (typeof verify)[0] | null = null;
 
         const cached = cachedNumbers.find((cached) => cached.jidOptions.includes(user.jid.replace('+', '')));
@@ -4648,6 +4661,10 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async baileysOnWhatsapp(jid: string) {
+    if (jid.endsWith('@lid')) {
+      return [{ jid, exists: true }];
+    }
+
     const response = await this.client.onWhatsApp(jid);
 
     return response;
