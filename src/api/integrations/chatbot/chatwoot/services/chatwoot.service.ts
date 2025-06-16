@@ -730,8 +730,11 @@ export class ChatwootService {
   
     // 4) Contato
     const isGroup = remoteJid.includes("@g.us");
-    const chatId = isGroup ? remoteJid : remoteJid.split("@")[0];
-    this.logger.verbose("[_createConversation] isGroup=" + isGroup + ", chatId=" + chatId);
+    const isLinkedId = remoteJid.endsWith("@lid");
+    const chatId = isGroup || isLinkedId ? remoteJid : remoteJid.split("@")[0];
+    this.logger.verbose(
+      "[_createConversation] isGroup=" + isGroup + ", chatId=" + chatId
+    );
   
     let contact = await this.findContact(instance, chatId);
     if (contact) {
@@ -758,7 +761,7 @@ export class ChatwootService {
         isGroup,
         name,
         pictureUrl || null,
-        isGroup ? remoteJid : undefined
+        remoteJid
       );
       if (!contact) {
         this.logger.error("[_createConversation] Falha ao criar contato para " + chatId);
