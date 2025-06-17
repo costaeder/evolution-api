@@ -1337,9 +1337,7 @@ export class BaileysStartupService extends ChannelStartupService {
           }
 
           if (this.configService.get<Database>('DATABASE').SAVE_DATA.NEW_MESSAGE) {
-            // originalJid is kept only for webhook/logic use and is not part of the Prisma schema
-            const dbData = { ...messageRaw } as any;
-            delete dbData.originalJid;
+            const dbData = this.sanitizeMessageData(messageRaw);
             const msg = await this.prismaRepository.message.create({
               data: dbData,
             });
@@ -1405,8 +1403,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
                   messageRaw.message.mediaUrl = mediaUrl;
 
-                  const dbData = { ...messageRaw } as any;
-                  delete dbData.originalJid;
+                  const dbData = this.sanitizeMessageData(messageRaw);
 
                   await this.prismaRepository.message.update({
                     where: { id: msg.id },
@@ -2355,9 +2352,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
 
       if (this.configService.get<Database>('DATABASE').SAVE_DATA.NEW_MESSAGE) {
-        // originalJid is kept only for webhook/logic use and is not part of the Prisma schema
-        const dbData = { ...messageRaw } as any;
-        delete dbData.originalJid;
+        const dbData = this.sanitizeMessageData(messageRaw);
         const msg = await this.prismaRepository.message.create({
           data: dbData,
         });
@@ -2413,8 +2408,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
             messageRaw.message.mediaUrl = mediaUrl;
 
-            const dbData = { ...messageRaw } as any;
-            delete dbData.originalJid;
+            const dbData = this.sanitizeMessageData(messageRaw);
 
             await this.prismaRepository.message.update({
               where: { id: msg.id },
@@ -4551,6 +4545,12 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     return messageRaw;
+  }
+
+  private sanitizeMessageData(data: any) {
+    const dbData = { ...data } as any;
+    delete dbData.originalJid;
+    return dbData;
   }
 
   private async syncChatwootLostMessages() {
