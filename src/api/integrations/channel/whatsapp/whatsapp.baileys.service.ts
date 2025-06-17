@@ -1405,9 +1405,12 @@ export class BaileysStartupService extends ChannelStartupService {
 
                   messageRaw.message.mediaUrl = mediaUrl;
 
+                  const dbData = { ...messageRaw } as any;
+                  delete dbData.originalJid;
+
                   await this.prismaRepository.message.update({
                     where: { id: msg.id },
-                    data: messageRaw,
+                    data: dbData,
                   });
                 } catch (error) {
                   this.logger.error(['Error on upload file to minio', error?.message, error?.stack]);
@@ -2410,9 +2413,12 @@ export class BaileysStartupService extends ChannelStartupService {
 
             messageRaw.message.mediaUrl = mediaUrl;
 
+            const dbData = { ...messageRaw } as any;
+            delete dbData.originalJid;
+
             await this.prismaRepository.message.update({
               where: { id: msg.id },
-              data: messageRaw,
+              data: dbData,
             });
           } catch (error) {
             this.logger.error(['Error on upload file to minio', error?.message, error?.stack]);
