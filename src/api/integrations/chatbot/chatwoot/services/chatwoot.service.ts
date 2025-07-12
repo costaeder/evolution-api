@@ -298,29 +298,28 @@ export class ChatwootService {
     jid?: string,
   ) {
     try {
+      this.logger.verbose(
+        `[ChatwootService][createContact] start instance=${instance.instanceName} phone=${phoneNumber}`,
+      );
+
       const client = await this.clientCw(instance);
 
       if (!client) {
-        this.logger.warn('client not found');
+        this.logger.warn(`[ChatwootService][createContact] client not found for instance=${instance.instanceName}`);
         return null;
       }
 
-      const data: any = {
-        inbox_id: inboxId,
-        name: name || phoneNumber,
-        avatar_url,
-      };
+      this.logger.verbose(`[ChatwootService][createContact] client obtained`);
 
-      if (isGroup) {
-        data.identifier = phoneNumber;
-      } else {
+      const data: any = { inbox_id: inboxId, name: name || phoneNumber, avatar_url };
+      if (!isGroup) {
         data.identifier = jid;
         data.phone_number = `+${phoneNumber}`;
+      } else {
+        data.identifier = phoneNumber;
       }
 
-      this.logger.verbose(
-        `[ChatwootService][createContact] payload=${JSON.stringify(data)}`,
-      );
+      this.logger.verbose(`[ChatwootService][createContact] payload=${JSON.stringify(data)}`);
 
       let rawResponse: any;
       try {
@@ -328,13 +327,9 @@ export class ChatwootService {
           accountId: this.provider.accountId,
           data,
         });
-        this.logger.verbose(
-          `[ChatwootService][createContact] raw create response=${JSON.stringify(rawResponse)}`,
-        );
+        this.logger.verbose(`[ChatwootService][createContact] raw create response=${JSON.stringify(rawResponse)}`);
       } catch (err) {
-        this.logger.error(
-          `[ChatwootService][createContact] error creating contact: ${err}`,
-        );
+        this.logger.error(`[ChatwootService][createContact] error creating contact: ${err}`);
         throw err;
       }
 
@@ -349,19 +344,18 @@ export class ChatwootService {
         return null;
       }
 
+      this.logger.verbose(`[ChatwootService][createContact] created contact id=${contactId}`);
+
       try {
+        this.logger.verbose(
+          `[ChatwootService][createContact] adding label=${this.provider.nameInbox} to contactId=${contactId}`,
+        );
         await this.addLabelToContact(this.provider.nameInbox, contactId);
       } catch (err) {
-        this.logger.error(
-          `[ChatwootService][createContact] error addLabelToContact: ${err}`,
-        );
+        this.logger.error(`[ChatwootService][createContact] error addLabelToContact: ${err}`);
       }
 
-      this.logger.verbose(
-        `[ChatwootService][createContact] created contact id=${contactId}`,
-      );
-
-      return { id: contactId } as any;
+      return { id: contactId, ...contactObj } as any;
     } catch (error) {
       this.logger.error('Error creating contact');
       console.log(error);
@@ -2074,14 +2068,10 @@ export class ChatwootService {
 
             const rawPhone = participantJid.split('@')[0];
             const match = rawPhone.match(/^(\d{2})(\d{2})(\d{4})(\d{4})$/);
-            const formattedPhone = match
-              ? `+${match[1]} (${match[2]}) ${match[3]}-${match[4]}`
-              : `+${rawPhone}`;
+            const formattedPhone = match ? `+${match[1]} (${match[2]}) ${match[3]}-${match[4]}` : `+${rawPhone}`;
 
             const name = body.pushName?.trim();
-            const prefix = name
-              ? `**${formattedPhone} – ${name}:**\n\n`
-              : `**${formattedPhone}:**\n\n`;
+            const prefix = name ? `**${formattedPhone} – ${name}:**\n\n` : `**${formattedPhone}:**\n\n`;
 
             const content = body.key.fromMe ? bodyMessage : `${prefix}${bodyMessage}`;
 
@@ -2221,14 +2211,10 @@ export class ChatwootService {
 
           const rawPhone = participantJid.split('@')[0];
           const match = rawPhone.match(/^(\d{2})(\d{2})(\d{4})(\d{4})$/);
-          const formattedPhone = match
-            ? `+${match[1]} (${match[2]}) ${match[3]}-${match[4]}`
-            : `+${rawPhone}`;
+          const formattedPhone = match ? `+${match[1]} (${match[2]}) ${match[3]}-${match[4]}` : `+${rawPhone}`;
 
           const name = body.pushName?.trim();
-          const prefix = name
-            ? `**${formattedPhone} – ${name}:**\n\n`
-            : `**${formattedPhone}:**\n\n`;
+          const prefix = name ? `**${formattedPhone} – ${name}:**\n\n` : `**${formattedPhone}:**\n\n`;
 
           const content = body.key.fromMe ? bodyMessage : `${prefix}${bodyMessage}`;
 
