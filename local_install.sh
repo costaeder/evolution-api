@@ -72,7 +72,7 @@ npm_install_with_retry() {
     
     while [ $attempt -le $max_attempts ]; do
         log "Tentativa $attempt de $max_attempts para npm install"
-        if npm install; then
+        if npm install --legacy-peer-deps; then
             return 0
         fi
         attempt=$((attempt + 1))
@@ -119,7 +119,7 @@ log "npm: $(npm -v)"
 # Instala dependências do projeto
 log "Instalando dependências do projeto..."
 rm -rf node_modules
-npm install
+npm install --legacy-peer-deps
 
 # Deploy do banco de dados
 log "Deploy do banco de dados..."
