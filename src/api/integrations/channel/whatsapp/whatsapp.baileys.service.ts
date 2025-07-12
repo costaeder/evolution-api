@@ -149,10 +149,10 @@ import { v4 } from 'uuid';
 
 import { useVoiceCallsBaileys } from './voiceCalls/useVoiceCallsBaileys';
 
-export interface DownloadMediaMessageContext {
-  key: proto.IMessageKey;
-  message: proto.IMessage;
-}
+type DownloadMediaMessageContext = {
+  reuploadRequest: (msg: WAMessage) => Promise<WAMessage>;
+  logger: P.Logger;
+};
 
 const groupMetadataCache = new CacheService(new CacheEngine(configService, 'groups').getEngine());
 
@@ -3415,34 +3415,33 @@ export class BaileysStartupService extends ChannelStartupService {
     }
   }
 
-  public async getBase64FromMediaMessage(data: getBase64FromMediaMessageDto, getBuffer = false) {
+  public async getBase64FromMediaMessage(
+    data: getBase64FromMediaMessageDto,
+    getBuffer = false,
+  ) {
     try {
       const m = data?.message;
       const convertToMp4 = data?.convertToMp4 ?? false;
 
-      const msg = m?.message ? m : ((await this.getMessage(m.key, true)) as proto.IWebMessageInfo);
-
+      const msg: proto.IWebMessageInfo = m?.message
+        ? m
+        : ((await this.getMessage(m.key, true)) as proto.IWebMessageInfo);
       if (!msg) {
         throw new BadRequestException('Message not found');
       }
 
-      let content: any = msg.message;
       for (const subtype of MessageSubtype) {
-        while (content?.[subtype]) {
-          content = content[subtype].message;
+        if (msg.message[subtype]) {
+          msg.message = msg.message[subtype].message;
+          break;
         }
       }
 
-      if ('messageContextInfo' in content && Object.keys(content).length === 1) {
-        throw new BadRequestException('The message is messageContextInfo');
-      }
-
       let mediaMessage: any;
-      let mediaType: string;
-
+      let mediaType = '';
       for (const type of TypeMediaMessage) {
-        if (content[type]) {
-          mediaMessage = content[type];
+        if (msg.message[type]) {
+          mediaMessage = msg.message[type];
           mediaType = type;
           break;
         }
@@ -3452,59 +3451,65 @@ export class BaileysStartupService extends ChannelStartupService {
         throw new BadRequestException('The message is not of the media type');
       }
 
-      if (typeof mediaMessage['mediaKey'] === 'object') {
-        content = JSON.parse(JSON.stringify(content));
+      if (typeof mediaMessage.mediaKey === 'object') {
+        msg.message = JSON.parse(JSON.stringify(msg.message));
       }
 
-      const ctx: DownloadMediaMessageContext = { key: msg.key, message: content };
+      const downloadContext: DownloadMediaMessageContext = {
+        logger: P({ level: 'error' }),
+        reuploadRequest: async (message: WAMessage): Promise<WAMessage> => {
+          const updated = await this.client.updateMediaMessage(message);
+          return updated ?? message;
+        },
+      };
 
-      let buffer: Buffer | undefined;
-
+      let buffer: Buffer;
       try {
-        buffer = await downloadMediaMessage(
-          ctx,
+        buffer = (await downloadMediaMessage(
+          { key: msg.key, message: msg.message },
           'buffer',
           {},
-          { logger: P({ level: 'error' }) as any, reuploadRequest: this.client.updateMediaMessage },
+          downloadContext,
+        )) as Buffer;
+      } catch (initialError) {
+        this.logger.warn(
+          'Initial downloadMediaMessage failed, updating media and retrying...',
         );
-      } catch (error) {
-        this.logger.warn('Error downloading media, retrying...');
-        this.logger.error(error);
         await this.client.updateMediaMessage(msg);
-        buffer = await downloadMediaMessage(ctx, 'buffer', {}, { logger: P({ level: 'error' }) as any });
+        buffer = (await downloadMediaMessage(
+          { key: msg.key, message: msg.message },
+          'buffer',
+          {},
+          { logger: P({ level: 'error' }), reuploadRequest: async (m: WAMessage) => m },
+        )) as Buffer;
       }
 
-      if (!buffer) {
-        throw new BadRequestException('Unable to download media');
-      }
+      const typeMessage = getContentType(msg.message);
 
-      const typeMessage = getContentType(content);
-
-      const ext = mimeTypes.extension(mediaMessage?.['mimetype']);
-      const fileName = mediaMessage?.['fileName'] || `${msg.key.id}.${ext}` || `${v4()}.${ext}`;
+      const ext = mimeTypes.extension(mediaMessage?.mimetype);
+      const fileName = mediaMessage?.fileName || `${msg.key.id}.${ext}` || `${v4()}.${ext}`;
 
       if (convertToMp4 && typeMessage === 'audioMessage') {
         try {
-          const convert = await this.processAudioMp4(buffer.toString('base64'));
-
-          if (Buffer.isBuffer(convert)) {
+          const converted = await this.processAudioMp4(buffer.toString('base64'));
+          if (Buffer.isBuffer(converted)) {
             return {
               mediaType,
               fileName,
-              caption: mediaMessage['caption'],
+              caption: mediaMessage.caption,
               size: {
-                fileLength: mediaMessage['fileLength'],
-                height: mediaMessage['height'],
-                width: mediaMessage['width'],
+                fileLength: mediaMessage.fileLength,
+                height: mediaMessage.height,
+                width: mediaMessage.width,
               },
               mimetype: 'audio/mp4',
-              base64: convert.toString('base64'),
-              buffer: getBuffer ? convert : null,
+              base64: converted.toString('base64'),
+              buffer: getBuffer ? converted : null,
             };
           }
-        } catch (error) {
+        } catch (convertError) {
           this.logger.error('Error converting audio to mp4:');
-          this.logger.error(error);
+          this.logger.error(convertError);
           throw new BadRequestException('Failed to convert audio to MP4');
         }
       }
@@ -3512,13 +3517,13 @@ export class BaileysStartupService extends ChannelStartupService {
       return {
         mediaType,
         fileName,
-        caption: mediaMessage['caption'],
+        caption: mediaMessage.caption,
         size: {
-          fileLength: mediaMessage['fileLength'],
-          height: mediaMessage['height'],
-          width: mediaMessage['width'],
+          fileLength: mediaMessage.fileLength,
+          height: mediaMessage.height,
+          width: mediaMessage.width,
         },
-        mimetype: mediaMessage['mimetype'],
+        mimetype: mediaMessage.mimetype,
         base64: buffer.toString('base64'),
         buffer: getBuffer ? buffer : null,
       };
