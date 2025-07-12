@@ -4262,26 +4262,30 @@ export class BaileysStartupService extends ChannelStartupService {
     return unreadMessages;
   }
 
-  private async addLabel(labelId: string, instanceId: string, chatId: string) {
+  private async addLabel(labelId: string, instanceId: string, chatId: string): Promise<void> {
     try {
-      const chat = await this.prismaRepository.chat.findFirst({
-        where: { instanceId, remoteJid: chatId },
-      });
-
-      if (chat) {
-        const labels: string[] = Array.isArray(chat.labels) ? (chat.labels as string[]) : [];
-        if (!labels.includes(labelId)) {
-          labels.push(labelId);
-          await this.prismaRepository.chat.update({ where: { id: chat.id }, data: { labels } });
-        }
-      } else {
-        await this.prismaRepository.chat.create({
-          data: { id: cuid(), instanceId, remoteJid: chatId, labels: [labelId] },
-        });
-      }
-    } catch (error) {
-      this.logger.error('Error updating labels for chat');
-      this.logger.error(error);
+      await this.prismaRepository.$executeRawUnsafe(
+        `UPDATE "Chat"
+           SET "labels" = (
+             SELECT to_jsonb(array_agg(DISTINCT elem))
+             FROM (
+               SELECT jsonb_array_elements_text("Chat".labels) AS elem
+               UNION
+               SELECT $1::text AS elem
+             ) sub
+           ),
+           "updatedAt" = NOW()
+         WHERE "instanceId" = $2
+           AND "remoteJid"  = $3;`,
+        labelId,
+        instanceId,
+        chatId
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      console.warn(
+        `Failed to add label ${labelId} to chat ${chatId}@${instanceId}: ${msg}`
+      );
     }
   }
 
