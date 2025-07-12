@@ -61,7 +61,7 @@ const setBucketPolicy = async () => {
     if (err.code === 'NotImplemented') {
       logger.warn(`[S3 Service] setBucketPolicy not supported by this endpoint, ignoring (bucket=${bucketName})`);
     } else {
-      logger.error('[S3 Service] Error applying bucket policy', err);
+      logger.error(['[S3 Service] Error applying bucket policy', err]);
       throw err;
     }
   }
