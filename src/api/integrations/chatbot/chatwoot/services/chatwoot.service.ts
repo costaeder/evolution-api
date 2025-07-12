@@ -45,7 +45,7 @@ export class ChatwootService {
 
   private provider: any;
 
-  private pendingCreateConv = new Map<string, Promise<number | null>>();
+  private pendingCreateConv = new Map<string, Promise<number>>();
 
   constructor(
     private readonly waMonitor: WAMonitoringService,
@@ -812,7 +812,7 @@ export class ChatwootService {
     let triedRecovery = false;
     const cacheKey = `${instance.instanceName}:createConversation-${remoteJid}`;
 
-    const promise = (async (): Promise<number | null> => {
+    const promise = (async (): Promise<number> => {
       try {
         return await this._createConversation(instance, body);
       } catch (err) {
@@ -831,6 +831,7 @@ export class ChatwootService {
       return await promise;
     } finally {
       this.pendingCreateConv.delete(remoteJid);
+      this.logger.verbose(`[createConversation] Removido pendingCreateConv para ${remoteJid}`);
     }
   }
 
