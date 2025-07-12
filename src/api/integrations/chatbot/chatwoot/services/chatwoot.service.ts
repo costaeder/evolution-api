@@ -45,6 +45,8 @@ export class ChatwootService {
 
   private provider: any;
 
+  private pendingCreateConv = new Map<string, Promise<number | null>>();
+
   constructor(
     private readonly waMonitor: WAMonitoringService,
     private readonly configService: ConfigService,
@@ -303,44 +305,63 @@ export class ChatwootService {
         return null;
       }
 
-      let data: any = {};
-      if (!isGroup) {
-        data = {
-          inbox_id: inboxId,
-          name: name || phoneNumber,
-          identifier: jid,
-          avatar_url: avatar_url,
-        };
+      const data: any = {
+        inbox_id: inboxId,
+        name: name || phoneNumber,
+        avatar_url,
+      };
 
-        if ((jid && jid.includes('@')) || !jid) {
-          data['phone_number'] = `+${phoneNumber}`;
-        }
+      if (isGroup) {
+        data.identifier = phoneNumber;
       } else {
-        data = {
-          inbox_id: inboxId,
-          name: name || phoneNumber,
-          identifier: phoneNumber,
-          avatar_url: avatar_url,
-        };
+        data.identifier = jid;
+        data.phone_number = `+${phoneNumber}`;
       }
 
-      const contact = await client.contacts.create({
-        accountId: this.provider.accountId,
-        data,
-      });
+      this.logger.verbose(
+        `[ChatwootService][createContact] payload=${JSON.stringify(data)}`,
+      );
 
-      if (!contact) {
-        this.logger.warn('contact not found');
+      let rawResponse: any;
+      try {
+        rawResponse = await client.contacts.create({
+          accountId: this.provider.accountId,
+          data,
+        });
+        this.logger.verbose(
+          `[ChatwootService][createContact] raw create response=${JSON.stringify(rawResponse)}`,
+        );
+      } catch (err) {
+        this.logger.error(
+          `[ChatwootService][createContact] error creating contact: ${err}`,
+        );
+        throw err;
+      }
+
+      const maybePayload = rawResponse?.payload?.contact;
+      const contactObj = maybePayload ?? rawResponse;
+      const contactId = contactObj?.id as number | undefined;
+
+      if (!contactId) {
+        this.logger.error(
+          `[ChatwootService][createContact] no id found in response; raw=${JSON.stringify(rawResponse)}`,
+        );
         return null;
       }
 
-      const findContact = await this.findContact(instance, phoneNumber);
+      try {
+        await this.addLabelToContact(this.provider.nameInbox, contactId);
+      } catch (err) {
+        this.logger.error(
+          `[ChatwootService][createContact] error addLabelToContact: ${err}`,
+        );
+      }
 
-      const contactId = findContact?.id;
+      this.logger.verbose(
+        `[ChatwootService][createContact] created contact id=${contactId}`,
+      );
 
-      await this.addLabelToContact(this.provider.nameInbox, contactId);
-
-      return contact;
+      return { id: contactId } as any;
     } catch (error) {
       this.logger.error('Error creating contact');
       console.log(error);
@@ -548,7 +569,7 @@ export class ChatwootService {
     return filterPayload;
   }
 
-  public async createConversation(instance: InstanceDto, body: any) {
+  private async _createConversation(instance: InstanceDto, body: any) {
     const isLid = body.key.remoteJid.includes('@lid') && body.key.senderPn;
     const remoteJid = isLid ? body.key.senderPn : body.key.remoteJid;
     const cacheKey = `${instance.instanceName}:createConversation-${remoteJid}`;
@@ -783,6 +804,39 @@ export class ChatwootService {
     } catch (error) {
       this.logger.error(`Error in createConversation: ${error}`);
       return null;
+    }
+  }
+
+  public async createConversation(instance: InstanceDto, body: any): Promise<number | null> {
+    const isLid = body.key.remoteJid.includes('@lid') && body.key.senderPn;
+    const remoteJid = isLid ? body.key.senderPn : body.key.remoteJid;
+
+    if (this.pendingCreateConv.has(remoteJid)) {
+      return this.pendingCreateConv.get(remoteJid)!;
+    }
+
+    let triedRecovery = false;
+    const cacheKey = `${instance.instanceName}:createConversation-${remoteJid}`;
+
+    const promise = (async (): Promise<number | null> => {
+      try {
+        return await this._createConversation(instance, body);
+      } catch (err) {
+        this.logger.error(`[createConversation] first attempt failed: ${err}`);
+        if (!triedRecovery) {
+          triedRecovery = true;
+          await this.cache.delete(cacheKey);
+          return await this._createConversation(instance, body);
+        }
+        throw err;
+      }
+    })();
+
+    this.pendingCreateConv.set(remoteJid, promise);
+    try {
+      return await promise;
+    } finally {
+      this.pendingCreateConv.delete(remoteJid);
     }
   }
 
@@ -2000,25 +2054,36 @@ export class ChatwootService {
           fileStream.push(null);
 
           if (body.key.remoteJid.includes('@g.us')) {
-            const participantName = body.pushName;
-            const rawPhoneNumber = body.key.participant.split('@')[0];
-            const phoneMatch = rawPhoneNumber.match(/^(\d{2})(\d{2})(\d{4})(\d{4})$/);
+            const participantJid = body.key.participant;
 
-            let formattedPhoneNumber: string;
-
-            if (phoneMatch) {
-              formattedPhoneNumber = `+${phoneMatch[1]} (${phoneMatch[2]}) ${phoneMatch[3]}-${phoneMatch[4]}`;
-            } else {
-              formattedPhoneNumber = `+${rawPhoneNumber}`;
+            if (!participantJid) {
+              const rawSend = await this.sendData(
+                getConversation,
+                fileStream,
+                nameFile,
+                messageType,
+                bodyMessage,
+                instance,
+                body,
+                'WAID:' + body.key.id,
+                quotedMsg,
+              );
+              if (!rawSend) this.logger.warn('message not sent');
+              return rawSend;
             }
 
-            let content: string;
+            const rawPhone = participantJid.split('@')[0];
+            const match = rawPhone.match(/^(\d{2})(\d{2})(\d{4})(\d{4})$/);
+            const formattedPhone = match
+              ? `+${match[1]} (${match[2]}) ${match[3]}-${match[4]}`
+              : `+${rawPhone}`;
 
-            if (!body.key.fromMe) {
-              content = `**${formattedPhoneNumber} - ${participantName}:**\n\n${bodyMessage}`;
-            } else {
-              content = `${bodyMessage}`;
-            }
+            const name = body.pushName?.trim();
+            const prefix = name
+              ? `**${formattedPhone} – ${name}:**\n\n`
+              : `**${formattedPhone}:**\n\n`;
+
+            const content = body.key.fromMe ? bodyMessage : `${prefix}${bodyMessage}`;
 
             const send = await this.sendData(
               getConversation,
@@ -2032,10 +2097,7 @@ export class ChatwootService {
               quotedMsg,
             );
 
-            if (!send) {
-              this.logger.warn('message not sent');
-              return;
-            }
+            if (!send) this.logger.warn('message not sent');
 
             return send;
           } else {
@@ -2139,25 +2201,36 @@ export class ChatwootService {
         }
 
         if (body.key.remoteJid.includes('@g.us')) {
-          const participantName = body.pushName;
-          const rawPhoneNumber = body.key.participant.split('@')[0];
-          const phoneMatch = rawPhoneNumber.match(/^(\d{2})(\d{2})(\d{4})(\d{4})$/);
+          const participantJid = body.key.participant;
 
-          let formattedPhoneNumber: string;
-
-          if (phoneMatch) {
-            formattedPhoneNumber = `+${phoneMatch[1]} (${phoneMatch[2]}) ${phoneMatch[3]}-${phoneMatch[4]}`;
-          } else {
-            formattedPhoneNumber = `+${rawPhoneNumber}`;
+          if (!participantJid) {
+            const rawSend = await this.createMessage(
+              instance,
+              getConversation,
+              bodyMessage,
+              messageType,
+              false,
+              [],
+              body,
+              'WAID:' + body.key.id,
+              quotedMsg,
+            );
+            if (!rawSend) this.logger.warn('message not sent');
+            return rawSend;
           }
 
-          let content: string;
+          const rawPhone = participantJid.split('@')[0];
+          const match = rawPhone.match(/^(\d{2})(\d{2})(\d{4})(\d{4})$/);
+          const formattedPhone = match
+            ? `+${match[1]} (${match[2]}) ${match[3]}-${match[4]}`
+            : `+${rawPhone}`;
 
-          if (!body.key.fromMe) {
-            content = `**${formattedPhoneNumber} - ${participantName}:**\n\n${bodyMessage}`;
-          } else {
-            content = `${bodyMessage}`;
-          }
+          const name = body.pushName?.trim();
+          const prefix = name
+            ? `**${formattedPhone} – ${name}:**\n\n`
+            : `**${formattedPhone}:**\n\n`;
+
+          const content = body.key.fromMe ? bodyMessage : `${prefix}${bodyMessage}`;
 
           const send = await this.createMessage(
             instance,
@@ -2171,10 +2244,7 @@ export class ChatwootService {
             quotedMsg,
           );
 
-          if (!send) {
-            this.logger.warn('message not sent');
-            return;
-          }
+          if (!send) this.logger.warn('message not sent');
 
           return send;
         } else {
