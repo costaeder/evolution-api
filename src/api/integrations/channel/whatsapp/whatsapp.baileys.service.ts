@@ -3416,10 +3416,7 @@ export class BaileysStartupService extends ChannelStartupService {
     }
   }
 
-  public async getBase64FromMediaMessage(
-    data: getBase64FromMediaMessageDto,
-    getBuffer = false,
-  ) {
+  public async getBase64FromMediaMessage(data: getBase64FromMediaMessageDto, getBuffer = false) {
     try {
       const m = data?.message;
       const convertToMp4 = data?.convertToMp4 ?? false;
@@ -3473,9 +3470,7 @@ export class BaileysStartupService extends ChannelStartupService {
           downloadContext,
         )) as Buffer;
       } catch (initialError) {
-        this.logger.warn(
-          'Initial downloadMediaMessage failed, updating media and retrying...',
-        );
+        this.logger.warn('Initial downloadMediaMessage failed, updating media and retrying...');
         await this.client.updateMediaMessage(msg);
         buffer = (await downloadMediaMessage(
           { key: msg.key, message: msg.message },
@@ -4285,13 +4280,11 @@ export class BaileysStartupService extends ChannelStartupService {
            AND "remoteJid"  = $3;`,
         labelId,
         instanceId,
-        chatId
+        chatId,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : JSON.stringify(err);
-      console.warn(
-        `Failed to add label ${labelId} to chat ${chatId}@${instanceId}: ${msg}`
-      );
+      console.warn(`Failed to add label ${labelId} to chat ${chatId}@${instanceId}: ${msg}`);
     }
   }
 
