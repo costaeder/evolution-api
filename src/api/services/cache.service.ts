@@ -42,7 +42,8 @@ export class CacheService {
     if (!this.cache) {
       return;
     }
-    this.cache.set(key, value, ttl);
+    const effectiveTtl = typeof ttl === 'number' ? ttl : 60 * 60 * 2;
+    this.cache.set(key, value, effectiveTtl);
   }
 
   public async hSet(key: string, field: string, value: any) {
@@ -69,7 +70,12 @@ export class CacheService {
     if (!this.cache) {
       return;
     }
-    return this.cache.delete(key);
+    if (typeof key !== 'string') {
+      this.logger.error(`delete called with non-string key: ${JSON.stringify(key)}`);
+    } else if (key.includes('\n')) {
+      this.logger.error(`delete called with key containing newline: "${key}"`);
+    }
+    return this.cache.delete(key as any);
   }
 
   async hDelete(key: string, field: string) {
