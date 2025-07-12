@@ -139,7 +139,7 @@ import mimeTypes from 'mime-types';
 import NodeCache from 'node-cache';
 import cron from 'node-cron';
 import { release } from 'os';
-import { join } from 'path';
+import path, { join } from 'path';
 import P from 'pino';
 import qrcode, { QRCodeToDataURLOptions } from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -148,6 +148,11 @@ import { PassThrough, Readable } from 'stream';
 import { v4 } from 'uuid';
 
 import { useVoiceCallsBaileys } from './voiceCalls/useVoiceCallsBaileys';
+
+export interface DownloadMediaMessageContext {
+  key: proto.IMessageKey;
+  message: proto.IMessage;
+}
 
 const groupMetadataCache = new CacheService(new CacheEngine(configService, 'groups').getEngine());
 
@@ -1230,12 +1235,9 @@ export class BaileysStartupService extends ChannelStartupService {
 
                   const { buffer, mediaType, fileName, size } = media;
                   const mimetype = mimeTypes.lookup(fileName).toString();
-                  const fullName = join(
-                    `${this.instance.id}`,
-                    received.key.remoteJid,
-                    mediaType,
-                    `${Date.now()}_${fileName}`,
-                  );
+                  const ext = path.extname(fileName) || `.${mimeTypes.extension(mimetype)}`;
+                  const finalName = `${received.key.id}${ext}`;
+                  const fullName = join(`${this.instance.id}`, received.key.remoteJid, mediaType, finalName);
                   await s3Service.uploadFile(fullName, buffer, size.fileLength?.low, { 'Content-Type': mimetype });
 
                   await this.prismaRepository.media.create({
@@ -1362,6 +1364,10 @@ export class BaileysStartupService extends ChannelStartupService {
       const readChatToUpdate: Record<string, true> = {}; // {remoteJid: true}
 
       for await (const { key, update } of args) {
+        if (!key.id) {
+          continue;
+        }
+
         if (settings?.groupsIgnore && key.remoteJid?.includes('@g.us')) {
           continue;
         }
@@ -1415,7 +1421,7 @@ export class BaileysStartupService extends ChannelStartupService {
             remoteJid: key?.remoteJid,
             fromMe: key.fromMe,
             participant: key?.remoteJid,
-            status: status[update.status] ?? 'DELETED',
+            status: status[update.status] ?? 'UNKNOWN',
             pollUpdates,
             instanceId: this.instanceId,
           };
@@ -1455,7 +1461,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
                 await this.prismaRepository.message.update({
                   where: { id: findMessage.id },
-                  data: { status: status[update.status] },
+                  data: { status: status[update.status] ?? 'UNKNOWN' },
                 });
               } else {
                 this.logger.info(
@@ -2126,14 +2132,10 @@ export class BaileysStartupService extends ChannelStartupService {
             const { buffer, mediaType, fileName, size } = media;
 
             const mimetype = mimeTypes.lookup(fileName).toString();
+            const ext = path.extname(fileName) || `.${mimeTypes.extension(mimetype)}`;
+            const finalName = `${messageRaw.key.id}${ext}`;
 
-            const fullName = join(
-              `${this.instance.id}`,
-              messageRaw.key.remoteJid,
-              `${messageRaw.key.id}`,
-              mediaType,
-              fileName,
-            );
+            const fullName = join(`${this.instance.id}`, messageRaw.key.remoteJid, mediaType, finalName);
 
             await s3Service.uploadFile(fullName, buffer, size.fileLength?.low, { 'Content-Type': mimetype });
 
@@ -3421,45 +3423,62 @@ export class BaileysStartupService extends ChannelStartupService {
       const msg = m?.message ? m : ((await this.getMessage(m.key, true)) as proto.IWebMessageInfo);
 
       if (!msg) {
-        throw 'Message not found';
+        throw new BadRequestException('Message not found');
       }
 
+      let content: any = msg.message;
       for (const subtype of MessageSubtype) {
-        if (msg.message[subtype]) {
-          msg.message = msg.message[subtype].message;
+        while (content?.[subtype]) {
+          content = content[subtype].message;
         }
       }
 
-      if ('messageContextInfo' in msg.message && Object.keys(msg.message).length === 1) {
-        throw 'The message is messageContextInfo';
+      if ('messageContextInfo' in content && Object.keys(content).length === 1) {
+        throw new BadRequestException('The message is messageContextInfo');
       }
 
       let mediaMessage: any;
       let mediaType: string;
 
       for (const type of TypeMediaMessage) {
-        mediaMessage = msg.message[type];
-        if (mediaMessage) {
+        if (content[type]) {
+          mediaMessage = content[type];
           mediaType = type;
           break;
         }
       }
 
       if (!mediaMessage) {
-        throw 'The message is not of the media type';
+        throw new BadRequestException('The message is not of the media type');
       }
 
       if (typeof mediaMessage['mediaKey'] === 'object') {
-        msg.message = JSON.parse(JSON.stringify(msg.message));
+        content = JSON.parse(JSON.stringify(content));
       }
 
-      const buffer = await downloadMediaMessage(
-        { key: msg?.key, message: msg?.message },
-        'buffer',
-        {},
-        { logger: P({ level: 'error' }) as any, reuploadRequest: this.client.updateMediaMessage },
-      );
-      const typeMessage = getContentType(msg.message);
+      const ctx: DownloadMediaMessageContext = { key: msg.key, message: content };
+
+      let buffer: Buffer | undefined;
+
+      try {
+        buffer = await downloadMediaMessage(
+          ctx,
+          'buffer',
+          {},
+          { logger: P({ level: 'error' }) as any, reuploadRequest: this.client.updateMediaMessage },
+        );
+      } catch (error) {
+        this.logger.warn('Error downloading media, retrying...');
+        this.logger.error(error);
+        await this.client.updateMediaMessage(msg);
+        buffer = await downloadMediaMessage(ctx, 'buffer', {}, { logger: P({ level: 'error' }) as any });
+      }
+
+      if (!buffer) {
+        throw new BadRequestException('Unable to download media');
+      }
+
+      const typeMessage = getContentType(content);
 
       const ext = mimeTypes.extension(mediaMessage?.['mimetype']);
       const fileName = mediaMessage?.['fileName'] || `${msg.key.id}.${ext}` || `${v4()}.${ext}`;
@@ -3469,7 +3488,7 @@ export class BaileysStartupService extends ChannelStartupService {
           const convert = await this.processAudioMp4(buffer.toString('base64'));
 
           if (Buffer.isBuffer(convert)) {
-            const result = {
+            return {
               mediaType,
               fileName,
               caption: mediaMessage['caption'],
@@ -3482,8 +3501,6 @@ export class BaileysStartupService extends ChannelStartupService {
               base64: convert.toString('base64'),
               buffer: getBuffer ? convert : null,
             };
-
-            return result;
           }
         } catch (error) {
           this.logger.error('Error converting audio to mp4:');
@@ -3496,7 +3513,11 @@ export class BaileysStartupService extends ChannelStartupService {
         mediaType,
         fileName,
         caption: mediaMessage['caption'],
-        size: { fileLength: mediaMessage['fileLength'], height: mediaMessage['height'], width: mediaMessage['width'] },
+        size: {
+          fileLength: mediaMessage['fileLength'],
+          height: mediaMessage['height'],
+          width: mediaMessage['width'],
+        },
         mimetype: mediaMessage['mimetype'],
         base64: buffer.toString('base64'),
         buffer: getBuffer ? buffer : null,
@@ -3504,7 +3525,10 @@ export class BaileysStartupService extends ChannelStartupService {
     } catch (error) {
       this.logger.error('Error processing media message:');
       this.logger.error(error);
-      throw new BadRequestException(error.toString());
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException((error as Error).message);
     }
   }
 
@@ -4239,27 +4263,26 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   private async addLabel(labelId: string, instanceId: string, chatId: string) {
-    const id = cuid();
+    try {
+      const chat = await this.prismaRepository.chat.findFirst({
+        where: { instanceId, remoteJid: chatId },
+      });
 
-    await this.prismaRepository.$executeRawUnsafe(
-      `INSERT INTO "Chat" ("id", "instanceId", "remoteJid", "labels", "createdAt", "updatedAt")
-       VALUES ($4, $2, $3, to_jsonb(ARRAY[$1]::text[]), NOW(), NOW()) ON CONFLICT ("instanceId", "remoteJid")
-     DO
-      UPDATE
-          SET "labels" = (
-          SELECT to_jsonb(array_agg(DISTINCT elem))
-          FROM (
-          SELECT jsonb_array_elements_text("Chat"."labels") AS elem
-          UNION
-          SELECT $1::text AS elem
-          ) sub
-          ),
-          "updatedAt" = NOW();`,
-      labelId,
-      instanceId,
-      chatId,
-      id,
-    );
+      if (chat) {
+        const labels: string[] = Array.isArray(chat.labels) ? (chat.labels as string[]) : [];
+        if (!labels.includes(labelId)) {
+          labels.push(labelId);
+          await this.prismaRepository.chat.update({ where: { id: chat.id }, data: { labels } });
+        }
+      } else {
+        await this.prismaRepository.chat.create({
+          data: { id: cuid(), instanceId, remoteJid: chatId, labels: [labelId] },
+        });
+      }
+    } catch (error) {
+      this.logger.error('Error updating labels for chat');
+      this.logger.error(error);
+    }
   }
 
   private async removeLabel(labelId: string, instanceId: string, chatId: string) {
