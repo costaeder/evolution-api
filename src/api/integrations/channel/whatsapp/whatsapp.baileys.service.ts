@@ -1365,6 +1365,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
       for await (const { key, update } of args) {
         if (!key.id) {
+          console.warn(`Mensagem sem key.id, pulando update: ${JSON.stringify(key)}`);
           continue;
         }
 
