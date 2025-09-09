@@ -1,4 +1,4 @@
-(Get-ECRLoginCommand).Password | docker login --username AWS --password-stdin 130811782740.dkr.ecr.us-east-2.amazonaws.com
+(Get-ECRLoginCommand).Password | podman login --username AWS --password-stdin 130811782740.dkr.ecr.us-east-2.amazonaws.com
 #
 
 $ErrorActionPreference = "Stop"
@@ -6,6 +6,6 @@ $ErrorActionPreference = "Stop"
  
  
 
-docker build -t evolution -f .\Dockerfile .
-docker tag evolution:latest 130811782740.dkr.ecr.us-east-2.amazonaws.com/evolution
-docker push 130811782740.dkr.ecr.us-east-2.amazonaws.com/evolution
+podman build -t evolution -f .\Dockerfile .
+podman tag evolution:latest 130811782740.dkr.ecr.us-east-2.amazonaws.com/evolution
+podman push 130811782740.dkr.ecr.us-east-2.amazonaws.com/evolution
