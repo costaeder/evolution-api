@@ -1,25 +1,51 @@
+version: "3.8"
+
+# Docker Compose para Desenvolvimento
+# PostgreSQL e Redis externos em 192.168.100.154
+
 services:
-  api:
-    container_name: evolution_api
-    image: evolution/api:local
-    build: .
-    restart: always
+  evolution-api:
+    container_name: evolution_dev
+    image: evolution-api:dev
+    restart: unless-stopped
     ports:
-      - 8080:8080
-    volumes:
-      - evolution_instances:/evolution/instances
-    networks:
-      - evolution-net
+      # Porta da API
+      - "27002:8080"
+    # volumes:
+      # Persistir instâncias localmente
+      # - ./instances:/evolution/instances
+      # Logs locais para debug
+      # - ./logs:/evolution/logs
     env_file:
+      # Carregar variáveis do .env
       - .env
-    expose:
-      - 8080
-
-volumes:
-  evolution_instances:
-
+    networks:
+      - evolution-dev-net
+    environment:
+      # Override de variáveis específicas (se necessário)
+      - NODE_ENV=development
+      - DOCKER_ENV=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
-  evolution-net:
-    name: evolution-net
-    driver: bridge
+  evolution-dev-net:
+    external: true
+    name: iadev-shared-net
+
+# Volumes não incluem Redis e PostgreSQL pois são externos
+# Apenas dados locais da aplicação
+volumes:
+  instances:
+    driver: local
+  logs:
+    driver: local

@@ -1,3 +1,5 @@
+import { trackFatalError } from '@utils/fatalErrorMonitor';
+
 import { Logger } from './logger.config';
 
 export function onUnexpectedError() {
@@ -8,6 +10,7 @@ export function onUnexpectedError() {
       stderr: process.stderr.fd,
       error,
     });
+    trackFatalError(error);
   });
 
   process.on('unhandledRejection', (error, origin) => {
@@ -17,5 +20,6 @@ export function onUnexpectedError() {
       stderr: process.stderr.fd,
     });
     logger.error(error);
+    trackFatalError(error);
   });
 }

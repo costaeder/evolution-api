@@ -315,3 +315,21 @@ export const profileSchema: JSONSchema7 = {
     isBusiness: { type: 'boolean' },
   },
 };
+
+export const resolveLidSchema: JSONSchema7 = {
+  $id: v4(),
+  type: 'object',
+  properties: {
+    lids: {
+      type: 'array',
+      minItems: 1,
+      uniqueItems: true,
+      items: {
+        type: 'string',
+        pattern: '@lid$',
+        description: '"lids" must be an array of strings ending with @lid',
+      },
+    },
+  },
+  required: ['lids'],
+};

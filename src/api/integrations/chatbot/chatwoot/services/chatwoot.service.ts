@@ -304,47 +304,58 @@ export class ChatwootService {
         return null;
       }
 
-      let data: any = {};
-      if (!isGroup) {
-        data = {
-          inbox_id: inboxId,
-          name: name || phoneNumber,
-          identifier: jid,
-          avatar_url: avatar_url,
-        };
+      this.logger.verbose(
+        `[ChatwootService][createContact] start instance=${instance.instanceName} phone=${phoneNumber}`,
+      );
 
-        if ((jid && jid.includes('@')) || !jid) {
-          data['phone_number'] = `+${phoneNumber}`;
-        }
+      const data: any = { inbox_id: inboxId, name: name || phoneNumber, avatar_url };
+      if (isGroup) {
+        data.identifier = phoneNumber;
       } else {
-        data = {
-          inbox_id: inboxId,
-          name: name || phoneNumber,
-          identifier: phoneNumber,
-          avatar_url: avatar_url,
-        };
+        data.identifier = jid;
+        data.phone_number = `+${phoneNumber}`;
       }
 
-      const contact = await client.contacts.create({
-        accountId: this.provider.accountId,
-        data,
-      });
+      this.logger.verbose(
+        `[ChatwootService][createContact] payload=${JSON.stringify({ ...data, avatar_url: !!avatar_url })}`,
+      );
 
-      if (!contact) {
-        this.logger.warn('contact not found');
+      let rawResponse: any;
+      try {
+        rawResponse = await client.contacts.create({
+          accountId: this.provider.accountId,
+          data,
+        });
+      } catch (error) {
+        this.logger.error(`[ChatwootService][createContact] error creating contact: ${error}`);
+        throw error;
+      }
+
+      const contactPayload = rawResponse?.payload?.contact ?? rawResponse;
+      const contactId = contactPayload?.id ?? null;
+
+      if (!contactId) {
+        this.logger.error(
+          `[ChatwootService][createContact] unable to extract contact id from response: ${JSON.stringify(rawResponse)}`,
+        );
         return null;
       }
 
-      const findContact = await this.findContact(instance, phoneNumber);
+      this.logger.verbose(`[ChatwootService][createContact] created contact id=${contactId}`);
 
-      const contactId = findContact?.id;
+      try {
+        await this.addLabelToContact(this.provider.nameInbox, contactId);
+        this.logger.verbose(
+          `[ChatwootService][createContact] label ${this.provider.nameInbox} applied to contactId=${contactId}`,
+        );
+      } catch (error) {
+        this.logger.error(`[ChatwootService][createContact] error addLabelToContact: ${error}`);
+      }
 
-      await this.addLabelToContact(this.provider.nameInbox, contactId);
-
-      return contact;
+      return { id: contactId, ...contactPayload };
     } catch (error) {
       this.logger.error('Error creating contact');
-      console.log(error);
+      this.logger.error(error);
       return null;
     }
   }
@@ -989,7 +1000,7 @@ export class ChatwootService {
     quotedMsg?: MessageModel,
   ) {
     if (sourceId && this.isImportHistoryAvailable()) {
-      const messageAlreadySaved = await chatwootImport.getExistingSourceIds([sourceId], conversationId);
+      const messageAlreadySaved = await chatwootImport.getExistingSourceIds([sourceId]);
       if (messageAlreadySaved) {
         if (messageAlreadySaved.size > 0) {
           this.logger.warn('Message already saved on chatwoot');
@@ -2143,6 +2154,26 @@ export class ChatwootService {
         }
 
         if (body.key.remoteJid.includes('@g.us')) {
+          if (!body.key.participant) {
+            const send = await this.createMessage(
+              instance,
+              getConversation,
+              bodyMessage,
+              messageType,
+              false,
+              [],
+              body,
+              'WAID:' + body.key.id,
+              quotedMsg,
+            );
+
+            if (!send) {
+              this.logger.warn('message not sent');
+            }
+
+            return send;
+          }
+
           const participantName = body.pushName;
           const rawPhoneNumber = body.key.participant.split('@')[0];
           const phoneMatch = rawPhoneNumber.match(/^(\d{2})(\d{2})(\d{4})(\d{4})$/);

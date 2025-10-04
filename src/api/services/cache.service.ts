@@ -42,7 +42,9 @@ export class CacheService {
     if (!this.cache) {
       return;
     }
-    this.cache.set(key, value, ttl);
+
+    const effectiveTtl = ttl ?? 2 * 60 * 60; // default 2h TTL to avoid stale entries
+    this.cache.set(key, value, effectiveTtl);
   }
 
   public async hSet(key: string, field: string, value: any) {
@@ -69,6 +71,20 @@ export class CacheService {
     if (!this.cache) {
       return;
     }
+    if (typeof key !== 'string') {
+      this.logger.error(
+        `Invalid cache key type: expected string but received ${typeof key}. Key content: ${JSON.stringify(key)}.`,
+      );
+    } else if (key.includes('\n')) {
+      this.logger.error(`Invalid cache key format (contains newline characters): ${key}.`);
+    }
+
+    // Protect monitoring keys from deletion (can break monitoring functionality)
+    if (key.includes('vcard') || key.includes('profilePic')) {
+      this.logger.verbose(`Skipping delete of monitoring key: ${key}`);
+      return false;
+    }
+
     return this.cache.delete(key);
   }
 

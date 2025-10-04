@@ -11,6 +11,7 @@ import {
   ProfilePictureDto,
   ProfileStatusDto,
   ReadMessageDto,
+  ResolveLidDto,
   SendPresenceDto,
   UpdateMessageDto,
   WhatsAppNumberDto,
@@ -34,6 +35,7 @@ import {
   profileSchema,
   profileStatusSchema,
   readMessageSchema,
+  resolveLidSchema,
   updateMessageSchema,
   whatsappNumberSchema,
 } from '@validate/validate.schema';
@@ -157,6 +159,16 @@ export class ChatRouter extends RouterBroker {
           schema: contactValidateSchema,
           ClassRef: Query<Contact>,
           execute: (instance, data) => chatController.fetchContacts(instance, data),
+        });
+
+        return res.status(HttpStatus.OK).json(response);
+      })
+      .post(this.routerPath('resolveLid'), ...guards, async (req, res) => {
+        const response = await this.dataValidate<ResolveLidDto>({
+          request: req,
+          schema: resolveLidSchema,
+          ClassRef: ResolveLidDto,
+          execute: (instance, data) => chatController.resolveLid(instance, data),
         });
 
         return res.status(HttpStatus.OK).json(response);

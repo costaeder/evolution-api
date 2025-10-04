@@ -19,11 +19,45 @@ import { Query } from '@api/repository/repository.service';
 import { WAMonitoringService } from '@api/services/monitor.service';
 import { Contact, Message, MessageUpdate } from '@prisma/client';
 
+class SimpleMutex {
+  private locked = false;
+  private waiting: Array<() => void> = [];
+
+  async acquire(): Promise<void> {
+    if (this.locked) {
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    }
+    this.locked = true;
+  }
+
+  release(): void {
+    const next = this.waiting.shift();
+    if (next) {
+      next();
+    } else {
+      this.locked = false;
+    }
+  }
+
+  async runExclusive<T>(work: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await work();
+    } finally {
+      this.release();
+    }
+  }
+}
+
 export class ChatController {
   constructor(private readonly waMonitor: WAMonitoringService) {}
 
+  private static whatsappNumberMutex = new SimpleMutex();
+
   public async whatsappNumber({ instanceName }: InstanceDto, data: WhatsAppNumberDto) {
-    return await this.waMonitor.waInstances[instanceName].whatsappNumber(data);
+    return await ChatController.whatsappNumberMutex.runExclusive(async () =>
+      this.waMonitor.waInstances[instanceName].whatsappNumber(data),
+    );
   }
 
   public async readMessage({ instanceName }: InstanceDto, data: ReadMessageDto) {
@@ -52,6 +86,10 @@ export class ChatController {
 
   public async fetchContacts({ instanceName }: InstanceDto, query: Query<Contact>) {
     return await this.waMonitor.waInstances[instanceName].fetchContacts(query);
+  }
+
+  public async resolveLid({ instanceName }: InstanceDto, data: { lids: string[] }) {
+    return await this.waMonitor.waInstances[instanceName].resolveLid(data.lids);
   }
 
   public async getBase64FromMediaMessage({ instanceName }: InstanceDto, data: getBase64FromMediaMessageDto) {

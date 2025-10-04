@@ -530,6 +530,124 @@ export class ChannelStartupService {
     });
   }
 
+  public async resolveLid(lids: string[]) {
+    const results = [];
+
+    for (const lid of lids) {
+      try {
+        // 1. Verificar se existe Contact
+        const contact = await this.prismaRepository.contact.findFirst({
+          where: {
+            remoteJid: lid,
+            instanceId: this.instanceId,
+          },
+        });
+
+        // 2. Buscar mensagens do LID
+        const messages = await this.prismaRepository.message.findMany({
+          where: {
+            instanceId: this.instanceId,
+            key: {
+              path: ['remoteJid'],
+              equals: lid,
+            },
+          },
+          orderBy: {
+            messageTimestamp: 'desc',
+          },
+        });
+
+        // 3. Se não tem nem contact nem messages
+        if (!contact && messages.length === 0) {
+          results.push({
+            lid,
+            status: 'NOT_FOUND',
+            metadata: {
+              reason: 'no_contact_or_messages_in_database',
+            },
+          });
+          continue;
+        }
+
+        // 4. Tentar extrair número real das mensagens
+        let realNumber = null;
+        let source = null;
+
+        for (const msg of messages) {
+          const key = msg.key as any;
+
+          if (key.senderPn) {
+            realNumber = key.senderPn.replace('@s.whatsapp.net', '').replace('@c.us', '');
+            source = 'senderPn';
+            break;
+          }
+
+          if (key.remoteJidAlt) {
+            realNumber = key.remoteJidAlt.replace('@s.whatsapp.net', '').replace('@c.us', '');
+            source = 'remoteJidAlt';
+            break;
+          }
+        }
+
+        // 5. Calcular firstSeen e lastSeen
+        const firstSeen = messages.length > 0 ? new Date(messages[messages.length - 1].messageTimestamp * 1000) : null;
+        const lastSeen = messages.length > 0 ? new Date(messages[0].messageTimestamp * 1000) : null;
+
+        // 6. Retornar baseado no que encontrou
+        if (realNumber) {
+          results.push({
+            lid,
+            status: 'FOUND_WITH_NUMBER',
+            realNumber,
+            realJid: `${realNumber}@s.whatsapp.net`,
+            pushName: contact?.pushName || null,
+            source,
+            metadata: {
+              messageCount: messages.length,
+              firstSeen,
+              lastSeen,
+            },
+          });
+        } else {
+          results.push({
+            lid,
+            status: 'FOUND_WITHOUT_NUMBER',
+            pushName: contact?.pushName || null,
+            metadata: {
+              messageCount: messages.length,
+              firstSeen,
+              lastSeen,
+              reason: 'whatsapp_never_sent_real_number',
+            },
+          });
+        }
+      } catch (error) {
+        this.logger.error(['Error resolving LID', lid, error?.message]);
+        results.push({
+          lid,
+          status: 'ERROR',
+          metadata: {
+            reason: error?.message || 'unknown_error',
+          },
+        });
+      }
+    }
+
+    // Calcular summary
+    const summary = {
+      total: results.length,
+      foundWithNumber: results.filter((r) => r.status === 'FOUND_WITH_NUMBER').length,
+      foundWithoutNumber: results.filter((r) => r.status === 'FOUND_WITHOUT_NUMBER').length,
+      notFound: results.filter((r) => r.status === 'NOT_FOUND').length,
+      errors: results.filter((r) => r.status === 'ERROR').length,
+    };
+
+    return {
+      results,
+      summary,
+    };
+  }
+
   public cleanMessageData(message: any) {
     if (!message) return message;
 

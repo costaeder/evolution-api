@@ -1,13 +1,13 @@
 {
   "name": "evolution-api",
-  "version": "2.3.4",
+  "version": "custom-2.3.4-0",
   "description": "Rest api for communication with WhatsApp",
   "main": "./dist/main.js",
   "type": "commonjs",
   "scripts": {
     "build": "tsc --noEmit && tsup",
     "start": "tsx ./src/main.ts",
-    "start:prod": "node dist/main",
+    "start:prod": "node --enable-source-maps -r source-map-support/register dist/main.js",
     "dev:server": "tsx watch ./src/main.ts",
     "test": "tsx watch ./test/all.test.ts",
     "lint": "eslint --fix --ext .ts src",
@@ -119,6 +119,7 @@
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "socks-proxy-agent": "^8.0.5",
+    "source-map-support": "^0.5.21",
     "swagger-ui-express": "^5.0.1",
     "tsup": "^8.3.5",
     "uuid": "^13.0.0"

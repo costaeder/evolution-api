@@ -127,3 +127,7 @@ export class BlockUserDto {
   number: string;
   status: 'block' | 'unblock';
 }
+
+export class ResolveLidDto {
+  lids: string[];
+}
