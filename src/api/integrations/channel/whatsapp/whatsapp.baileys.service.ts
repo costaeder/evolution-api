@@ -101,6 +101,7 @@ import makeWASocket, {
   Contact,
   delay,
   DisconnectReason,
+  downloadContentFromMessage,
   downloadMediaMessage,
   generateWAMessageFromContent,
   getAggregateVotesInPollMessage,
@@ -3661,15 +3662,45 @@ export class BaileysStartupService extends ChannelStartupService {
           {},
           downloadContext,
         )) as Buffer;
-      } catch {
-        this.logger.warn('downloadMediaMessage failed, updating media and retrying...');
+      } catch (initialError) {
+        this.logger.warn(`downloadMediaMessage failed: ${initialError}, updating media and retrying...`);
         await this.client.updateMediaMessage(msg);
-        buffer = (await downloadMediaMessage(
-          { key: msg.key, message: msg.message },
-          'buffer',
-          {},
-          { logger: P({ level: 'error' }), reuploadRequest: async (m: WAMessage) => m },
-        )) as Buffer;
+
+        try {
+          buffer = (await downloadMediaMessage(
+            { key: msg.key, message: msg.message },
+            'buffer',
+            {},
+            { logger: P({ level: 'error' }), reuploadRequest: async (m: WAMessage) => m },
+          )) as Buffer;
+        } catch (retryError) {
+          this.logger.error(
+            `Retry with downloadMediaMessage also failed: ${retryError}, trying fallback with downloadContentFromMessage...`,
+          );
+          const mediaType = Object.keys(msg.message).find((key) => key.endsWith('Message'));
+          if (!mediaType) throw new Error('Could not determine mediaType for fallback');
+
+          try {
+            const media = await downloadContentFromMessage(
+              {
+                mediaKey: msg.message?.[mediaType]?.mediaKey,
+                directPath: msg.message?.[mediaType]?.directPath,
+                url: `https://mmg.whatsapp.net${msg?.message?.[mediaType]?.directPath}`,
+              },
+              await this.mapMediaType(mediaType),
+              {},
+            );
+            const chunks = [];
+            for await (const chunk of media) {
+              chunks.push(chunk);
+            }
+            buffer = Buffer.concat(chunks);
+            this.logger.info('Download Media with downloadContentFromMessage was successful!');
+          } catch (fallbackError) {
+            this.logger.error(`Download Media with downloadContentFromMessage also failed: ${fallbackError}`);
+            throw fallbackError;
+          }
+        }
       }
 
       const typeMessage = getContentType(msg.message);
