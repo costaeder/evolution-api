@@ -1,0 +1,27 @@
+✅ DEPLOY CONCLUÍDO COM SUCESSO!
+
+Container: evolution_dev
+Rede: iadev-shared-net (10.89.0.0/24)
+IP Container: 10.89.0.34
+Porta Interna: 8080
+
+📍 COMO ACESSAR:
+
+1. Via IP do Container (RECOMENDADO):
+   http://10.89.0.34:8080
+
+2. Via Manager:
+   http://10.89.0.34:8080/manager
+
+3. Dentro da rede iadev-shared-net:
+   http://evolution_dev:8080
+
+⚠️ NOTA: localhost:29002 NÃO funciona devido a limitações do Podman rootless.
+         Use o IP do container ou configure proxy reverso.
+
+🔑 Credenciais:
+   API Key: b89a64e758697d5bbb5b481611965e34
+   Database: 192.168.100.154:5432/zyra_9232
+   Redis: 192.168.100.154:6379
+
+✅ Container rodando e funcionando!
